@@ -1,0 +1,1480 @@
+以下のコードは、提供された全ての機能をFirebase（BaaS）に完全移行した『index.html』および『admin.html』のフルコードです。
+サーバー側のExpress、SQLite、Socket.ioのロジックは、すべてフロントエンド内のFirebase SDK（Auth,
+Realtime Database, Cloud Storage）呼び出しに置き換えられ、サーバーレスで動作するようになっています。
+
+非常に長大なコードとなるため、まずは index.html を出力します。 ※もし途中で出力が途切れた場合は「続けて」とご返信ください。 続きから再開し、その後
+admin.html を出力します。
+
+index.html (Firebaseバックグラウンド版)
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><title>Friend Station</title>
+    <link rel="icon" href="./tag.jpg" type="image/jpeg">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Firebase SDK Compat -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        :root { 
+            --bg-dark: #000000; --bg-panel: #16181c; --bg-hover: #202327; 
+            --text-main: #e7e9ea; --text-sub: #71767b; --border: #2f3336; 
+            --accent: #2ecc71; --accent-glow: rgba(46, 204, 113, 0.2);
+            --danger: #e74c3c; --success: #2ecc71; 
+        }
+        *{margin:0;padding:0;box-sizing:border-box; -webkit-tap-highlight-color: transparent;} 
+        body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg-dark);color:var(--text-main);height:100vh;overflow:hidden;display:flex;}
+        
+        .hidden{display:none!important} 
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-thumb { background: #3f4347; border-radius: 3px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+
+        input,select,textarea { width:100%; padding:14px 16px; margin-bottom:10px; border:1px solid var(--border); border-radius:12px; background:var(--bg-panel); color:var(--text-main); outline:none; font-size:15px; transition:all 0.3s ease; } 
+        input:focus,textarea:focus { border-color:var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+        button { padding:12px 20px; border:none; border-radius:12px; background:var(--accent); color:#fff; cursor:pointer; font-weight:600; font-size:15px; transition:all 0.3s ease; } 
+        button:hover { transform: translateY(-2px); box-shadow: 0 4px 12px var(--accent-glow); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+        button.danger { background:var(--danger); } button.danger:hover { box-shadow: 0 4px 12px rgba(231, 76, 60, 0.3); }
+        button.success { background:var(--success); }
+        button[style*="background:transparent"], .emoji-btn, .msg-react-btn, .msg-opt-btn { box-shadow: none !important; }
+        button[style*="background:transparent"]:hover, .emoji-btn:hover { transform: scale(1.1); }
+
+        .switch { position: relative; display: inline-block; width: 46px; height: 24px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: var(--bg-hover); transition: .4s; border-radius: 24px; border: 1px solid var(--border); }
+        .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: var(--text-main); transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: var(--accent); border-color: var(--accent); }
+        input:checked + .slider:before { transform: translateX(22px); background-color: #fff; }
+
+        i.fa-solid, i.fa-regular { font-size: 1.1em; } .nav-btn i { width: 26px; text-align: center; }
+
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+
+        .toast { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); background: var(--text-main); color: var(--bg-dark); padding: 12px 24px; border-radius: 30px; box-shadow: 0 5px 15px rgba(0,0,0,0.5); z-index: 10000; font-weight: bold; font-size: 14px; opacity: 0; transition: all 0.3s ease; pointer-events: none; }
+        .toast.show { opacity: 1; top: 30px; }
+        #custom-confirm .modal { max-width: 320px; text-align: center; padding: 30px 25px; }
+
+        #scr-auth, #scr-pending {width:100%;max-width:420px;margin:auto;background:var(--bg-panel);padding:40px 30px;border-radius:24px;border:1px solid var(--border);box-shadow:0 15px 50px rgba(0,0,0,0.8); animation: slideUp 0.4s ease-out;}
+        #scr-auth h2{text-align:center;margin-bottom:25px;font-family:cursive;font-size:2.2em;color:var(--accent);}
+        .auth-link{background:none;color:var(--accent);text-decoration:none;font-size:14px;padding:10px 0;width:100%;text-align:center;display:block;} .auth-link:hover{text-decoration:underline; transform:none;}
+        .loader { margin:20px auto; border:4px solid var(--border); border-top:4px solid var(--accent); border-radius:50%; width:40px; height:40px; animation:spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .reg-step h3 { font-size: 1.1em; margin-bottom: 20px; color: var(--accent); text-align: center; } .reg-step button { margin-top: 15px; width: 100%; }
+
+        #scr-main{display:flex;width:100%;height:100%;position:relative; animation: fadeIn 0.4s ease;}
+        .sidebar{width:240px;background:var(--bg-dark);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:20px;gap:10px;z-index:10;}
+        .brand{font-size:22px;font-weight:bold;color:var(--accent);margin-bottom:25px;font-family:cursive;padding-left:10px; display:flex; align-items:center;}
+        .nav-btn{display:flex;align-items:center;gap:15px;background:transparent;color:var(--text-main);font-size:18px;padding:14px 15px;justify-content:flex-start;border-radius:25px;position:relative;}
+        .nav-btn:hover{background:var(--bg-hover); transform:none;} .nav-btn.active{font-weight:bold;color:var(--accent);} 
+        .badge{position:absolute;top:5px;right:15px;background:var(--danger);font-size:11px;padding:2px 6px;border-radius:10px;color:#fff;}
+        @media(max-width: 768px){ .sidebar{width:70px;padding:20px 10px;align-items:center;} .brand{display:none;} .nav-btn span{display:none;} .nav-btn{padding:12px;} .badge{right:5px;} }
+        
+        #slide-menu{position:absolute;top:0;left:240px;width:280px;height:100%;background:var(--bg-panel);border-right:1px solid var(--border);transform:translateX(-100%);transition:transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);z-index:9;padding:25px 20px;display:flex;flex-direction:column;gap:12px; box-shadow: 10px 0 30px rgba(0,0,0,0.5);}
+        @media(max-width: 768px){ #slide-menu{left:70px;} } #slide-menu.open{transform:translateX(0);}
+        #chat-menu{position:fixed!important;top:70px!important;right:20px!important;z-index:2147483647!important;left:auto!important;transform:none!important;}
+        #chat-menu, #chat-menu * { z-index:2147483647!important; }
+        .chat-box, .msg-wrap, .msg, .sys-call-msg { z-index:1; }
+        .sys-call-msg { position:relative; z-index:1; }
+        .menu-item{padding:14px;border-radius:12px;cursor:pointer;font-weight:bold;display:flex;align-items:center;gap:15px; transition:all 0.2s;} .menu-item:hover{background:var(--bg-hover);color:var(--accent);}
+        .menu-item i { width: 20px; text-align:center; }
+
+        .list-panel{width:350px;background:var(--bg-dark);border-right:1px solid var(--border);display:flex;flex-direction:column;z-index:5;transition:width 0.3s;}
+        .panel-header{padding:20px;font-size:1.4em;font-weight:bold;border-bottom:1px solid var(--border);background:rgba(0,0,0,0.8);backdrop-filter:blur(10px);position:sticky;top:0;z-index:2;}
+        .scroll-area{flex:1;overflow-y:auto;}
+        
+        .notes-area{padding:20px 20px 15px 20px; border-bottom:1px solid var(--border); min-height: 140px;}
+        .notes-list{display:flex;gap:15px;overflow-x:auto;padding-top:25px;padding-bottom:10px;scrollbar-width:none;} .notes-list::-webkit-scrollbar{display:none;}
+        .note-item{display:flex;flex-direction:column;align-items:center;width:72px;flex-shrink:0;position:relative;cursor:pointer;gap:6px;}
+        .note-img-wrap{width:68px;height:68px;border-radius:50%;background:linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);padding:3px;display:flex;align-items:center;justify-content:center;position:relative;}
+        .note-item.viewed .note-img-wrap { background: var(--border); }
+        .note-item.my-note .note-img-wrap { background: transparent; border: 2px solid var(--border); padding: 2px; }
+        .note-item img{width:100%;height:100%;border-radius:50%;object-fit:cover;border:2px solid var(--bg-dark);}
+        .note-name { font-size: 11px; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; text-align: center; }
+        .note-bubble{position:absolute;top:-15px;right:-15px;background:var(--bg-panel);border:1px solid var(--border);border-radius:15px;padding:4px 8px;font-size:11px;white-space:nowrap;max-width:80px;overflow:hidden;text-overflow:ellipsis;z-index:2;color:var(--text-main); box-shadow:0 2px 5px rgba(0,0,0,0.5);}
+        .note-reply-btn{position:absolute;top:-25px;right:-5px;background:var(--accent);color:#fff;border-radius:50%;width:24px;height:24px;display:none;align-items:center;justify-content:center;font-size:10px;z-index:3;cursor:pointer;}
+        .note-item:hover .note-reply-btn{display:flex;}
+        
+        .room-item{padding:15px 20px;display:flex;align-items:center;gap:15px;cursor:pointer; transition:background 0.2s; position:relative;} .room-item:hover{background:var(--bg-hover);} 
+        .room-item img{width:52px;height:52px;border-radius:50%;object-fit:cover;}
+        
+        .online-badge{position:absolute;bottom:0;right:0;width:14px;height:14px;background:#2ecc71;border:2px solid var(--bg-dark);border-radius:50%;display:none;z-index:2;}
+        .is-online .online-badge{display:block;}
+        .room-unread-badge { background: var(--danger); color: #fff; border-radius: 10px; padding: 2px 8px; font-size: 12px; font-weight: bold; margin-left: auto; }
+
+        .main-panel-container{flex:1;position:relative;background:var(--bg-dark);display:flex;flex-direction:column;}
+        .main-screen{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;background:var(--bg-dark);z-index:1;}
+        .main-screen.active{z-index:2; animation: fadeIn 0.3s ease-out;}
+        @media(max-width: 768px){ .list-panel{width:100%; position:absolute; left:70px; height:100%;} .main-panel-container{position:absolute; left:70px; width:calc(100% - 70px); height:100%; z-index:6; transform:translateX(100%); transition:transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);} .main-panel-container.active{transform:translateX(0);} }
+
+        .chat-header{padding:12px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:rgba(0,0,0,0.8);backdrop-filter:blur(10px);z-index:2;}
+        .chat-box{flex:1;padding:20px;overflow-y:auto;display:flex;flex-direction:column;gap:20px;}
+        .msg-wrap{display:flex;flex-direction:column;max-width:75%;position:relative;} .my-msg{align-self:flex-end;} .other-msg{align-self:flex-start;}
+        
+        .reply-banner{font-size:12px;color:var(--text-sub);background:var(--bg-hover);padding:6px 10px;border-radius:12px;margin-bottom:4px;z-index:1;display:inline-flex; align-items:center; gap:5px; align-self:flex-start;}
+        .msg{padding:12px 16px;border-radius:20px;word-wrap:break-word;position:relative;z-index:2;user-select:none; font-size:15px; line-height:1.4; display:flex; flex-direction:column;} 
+        
+        .my-msg .msg{background:var(--accent);color:#fff;border-bottom-right-radius:4px;} .other-msg .msg{background:var(--bg-panel);border:1px solid var(--border);border-bottom-left-radius:4px;}
+        .msg img, .msg video{max-width:100%;border-radius:12px;margin-top:8px;cursor:pointer;}
+        .msg-info{font-size:0.75em;color:var(--text-sub);margin-top:6px; display:flex; gap:5px; align-items:center;} .is-read{color:var(--accent);}
+        .reactions-badge{position:absolute;bottom:-12px;right:10px;background:var(--bg-panel);border:1px solid var(--border);border-radius:12px;padding:3px 8px;font-size:12px;display:flex;gap:4px;z-index:3; box-shadow:0 2px 5px rgba(0,0,0,0.5);}
+        .msg-react-btn { background:transparent; border:none; font-size:18px; cursor:pointer; opacity:0.5; transition:0.2s; padding:0 5px; } .msg-react-btn:hover { opacity:1; transform:scale(1.2); }
+        .msg-opt-btn { background:transparent; border:none; font-size:14px; cursor:pointer; opacity:0.5; padding:5px; color:var(--text-main); } .msg-opt-btn:hover { opacity:1; }
+        
+        .chat-input-area{padding:15px 20px;background:var(--bg-dark);border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px;}
+        #reply-preview, #edit-preview {background:var(--bg-hover);padding:10px 15px;border-radius:12px;font-size:13px;display:flex;justify-content:space-between;align-items:center;color:var(--text-sub);}
+        .chat-input-row{display:flex;align-items:center;gap:12px;} .chat-input-row input{margin:0;flex:1;border-radius:24px;background:var(--bg-panel);padding:12px 18px;}
+        .file-status{font-size:12px;color:var(--accent);white-space:nowrap;}
+
+        .post-card{border-bottom:1px solid var(--border);padding:20px;transition:background 0.2s;position:relative;cursor:pointer;} .post-card:hover{background:rgba(255,255,255,0.02);}
+        .post-header{display:flex;align-items:center;gap:12px;margin-bottom:10px;} .post-header img{width:44px;height:44px;border-radius:50%;object-fit:cover;cursor:pointer;}
+        .post-content{font-size:16px;line-height:1.5;margin-bottom:12px;white-space:pre-wrap;word-break:break-word;}
+        .post-media{width:100%;max-width:500px;border-radius:16px;margin-bottom:12px;border:1px solid var(--border);cursor:pointer;}
+        .post-actions{display:flex;justify-content:space-between;max-width:250px;color:var(--text-sub);font-size:15px;margin-top:12px;} 
+        .post-actions div{cursor:pointer;display:flex;align-items:center;gap:8px; transition:color 0.2s;} .post-actions div:hover{color:var(--accent);} .liked{color:var(--danger) !important;}
+        .del-post-btn{position:absolute;top:20px;right:20px;color:var(--text-sub);cursor:pointer;font-size:18px; transition:color 0.2s;} .del-post-btn:hover{color:var(--danger);}
+
+        .modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:2000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(5px);}
+        .modal-overlay:not(.hidden) .modal { animation: slideUp 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); }
+        .modal{background:var(--bg-panel);padding:25px;border-radius:24px;border:1px solid var(--border);width:95%;max-width:420px;max-height:85vh;display:flex;flex-direction:column;position:relative; box-shadow:0 15px 50px rgba(0,0,0,0.8);}
+        .close-btn{position:absolute;top:15px;right:20px;font-size:24px;cursor:pointer;color:var(--text-sub); transition:color 0.2s;} .close-btn:hover{color:var(--text-main);}
+        .modal img.prof-lg{width:100px;height:100px;border-radius:50%;object-fit:cover;margin:0 auto 15px;display:block;border:3px solid var(--accent);}
+        
+        #comments-list{flex:1;overflow-y:auto;margin:15px 0;display:flex;flex-direction:column;gap:15px;}
+        .comment-item{display:flex;gap:12px;font-size:15px;} .comment-item img.c-ic{width:36px;height:36px;border-radius:50%;}
+        .comment-item img.c-media{max-width:200px;border-radius:12px;margin-top:8px;border:1px solid var(--border);}
+        
+        #context-menu{position:fixed;background:var(--bg-panel);border:1px solid var(--border);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.8);z-index:2500;padding:8px;display:flex;flex-direction:column;gap:4px;}
+        .ctx-item{padding:12px 16px;cursor:pointer;border-radius:8px;display:flex;align-items:center;gap:12px; font-size:15px; transition:background 0.2s;} .ctx-item:hover{background:var(--bg-hover);}
+        .emoji-btn{background:none;border:none;font-size:26px;cursor:pointer;}
+        .saved-check{color:var(--accent);font-size:13px;margin-left:12px;opacity:0;transition:opacity 0.3s;} .saved-check.show{opacity:1;}
+        
+        #video-overlay {position:fixed;top:0;left:0;width:100%;height:100%;background:#000;z-index:3000;display:flex;flex-direction:column;}
+        #video-grid { flex:1; display:flex; flex-wrap:wrap; justify-content:center; align-items:center; gap:15px; padding:20px; padding-bottom:100px; overflow-y:auto; }
+        .video-wrap { position:relative; width:100%; max-width:400px; aspect-ratio:4/3; background:#111; border-radius:16px; overflow:hidden; display:flex; align-items:center; justify-content:center; box-shadow:0 10px 30px rgba(0,0,0,0.5); border:1px solid #333; }
+        .video-wrap video { width:100%; height:100%; object-fit:cover; transition: opacity 0.3s ease; }
+        .video-wrap .no-video-icon { position:absolute; width:120px; height:120px; border-radius:50%; object-fit:cover; display:none; border:3px solid var(--border); box-shadow:0 4px 15px rgba(0,0,0,0.8); z-index:1; }
+        .video-wrap .name-badge { position:absolute; bottom:10px; left:10px; background:rgba(0,0,0,0.6); color:#fff; padding:6px 12px; border-radius:12px; font-size:13px; backdrop-filter:blur(5px); font-weight:bold; z-index:2; }
+        .video-wrap .mic-off-badge { position:absolute; top:10px; right:10px; color:var(--danger); font-size:18px; display:none; background:rgba(0,0,0,0.6); padding:8px; border-radius:50%; backdrop-filter:blur(5px); z-index:2; }
+        .call-controls{position:absolute;bottom:40px;left:50%;transform:translateX(-50%);display:flex;gap:15px;background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);padding:15px 25px;border-radius:40px;box-shadow:0 10px 30px rgba(0,0,0,0.5);}
+
+        #text-call-overlay{position:absolute;top:0;left:0;width:100%;height:100%;background:var(--bg-dark);z-index:100;display:flex;flex-direction:column;padding:25px;}
+        .tc-box{flex:1;background:var(--bg-panel);padding:25px;border-radius:20px;overflow-y:auto;border:1px solid var(--border);font-size:32px; line-height:1.4; display:flex; flex-direction:column;}
+        #tc-remote-text{flex:1; white-space:pre-wrap;}
+        #tc-local-input{flex:1;font-size:32px;padding:25px;border-radius:20px;border:2px solid var(--accent);background:var(--bg-dark);resize:none;color:var(--text-main); line-height:1.4;}
+        
+        .sys-call-msg { text-align:center; padding:15px; margin:10px 0; background:rgba(46,204,113,0.1); border:1px solid var(--accent); border-radius:12px; color:var(--accent); }
+    </style>
+</head>
+<body>
+
+<div id="toast" class="toast">メッセージ</div>
+
+<div id="custom-confirm" class="modal-overlay hidden" style="z-index: 9999;">
+    <div class="modal" style="max-width: 320px; text-align: center; padding: 30px 25px;">
+        <i class="fa-solid fa-circle-exclamation" style="font-size:40px; color:var(--accent); margin-bottom:20px;"></i>
+        <h3 id="cc-msg" style="margin-bottom: 25px; font-size:16px; line-height:1.5;">確認メッセージ</h3>
+        <div style="display:flex; gap:10px;">
+            <button type="button" id="cc-btn-no" style="flex:1; background:var(--bg-hover); color:var(--text-main);">キャンセル</button>
+            <button type="button" id="cc-btn-yes" class="danger" style="flex:1;">OK</button>
+        </div>
+    </div>
+</div>
+
+<div id="scr-auth">
+    <h2 id="auth-title">Friend Station</h2>
+    <div id="auth-msg" style="color:var(--danger); margin-bottom:10px; text-align:center; font-weight:bold; font-size:14px; background:rgba(231,76,60,0.1); padding:8px; border-radius:8px; display:none;"></div>
+    
+    <form onsubmit="submitLogin(event); return false;" id="form-login">
+        <input type="text" id="l-user" placeholder="ユーザーID" required>
+        <input type="password" id="l-pass" placeholder="パスワード" required>
+        <button type="submit" id="btn-submit-login" style="width:100%;">ログイン</button>
+        <div style="margin-top:20px;text-align:center;">
+            <button type="button" class="auth-link" onclick="toggleAuth('reg')">アカウント作成</button>
+            <button type="button" class="auth-link" onclick="toggleAuth('trans')">データ引き出し(移行)</button>
+            <button type="button" class="auth-link" onclick="showTermsModal()" style="margin-top:15px;">利用規約・プライバシーポリシー</button>
+        </div>
+    </form>
+    <form onsubmit="return false;" id="form-reg" class="hidden">
+        <div id="step1" class="reg-step">
+            <h3><i class="fa-solid fa-id-card"></i> まずは本人確認をします</h3>
+            <div style="display:flex;gap:10px;">
+                <input type="text" id="r-fn" placeholder="姓" required>
+                <input type="text" id="r-ln" placeholder="名" required>
+            </div>
+            <button type="button" onclick="nextStep(2)">次へ</button>
+            <button type="button" class="auth-link" onclick="toggleAuth('login')">戻る</button>
+        </div>
+        <div id="step2" class="reg-step hidden">
+            <h3><i class="fa-solid fa-school"></i> 学校情報を入力してください</h3>
+            <input type="text" id="r-school" placeholder="学校名" required>
+            <div style="display:flex;gap:10px;">
+                <input type="text" id="r-grade" placeholder="学年" required>
+                <input type="text" id="r-class" placeholder="組" required>
+                <input type="text" id="r-att" placeholder="出席番号" required>
+            </div>
+            <button type="button" onclick="nextStep(3)">次へ</button>
+            <button type="button" class="auth-link" onclick="nextStep(1)">戻る</button>
+        </div>
+        <div id="step3" class="reg-step hidden">
+            <h3><i class="fa-solid fa-user-gear"></i> ユーザー設定をします</h3>
+            <input type="text" id="r-user" placeholder="ユーザーID (半角英数字)" required>
+            <input type="text" id="r-nick" placeholder="ニックネーム" required>
+            <button type="button" onclick="nextStep(4)">次へ</button>
+            <button type="button" class="auth-link" onclick="nextStep(2)">戻る</button>
+        </div>
+        <div id="step4" class="reg-step hidden">
+            <h3><i class="fa-solid fa-lock"></i> パスワードと生年月日</h3>
+            <input type="password" id="r-pass" placeholder="パスワード" required>
+            <label style="font-size:0.8em;color:var(--text-sub);margin-bottom:5px;display:block;">生年月日</label>
+            <input type="date" id="r-birth" required>
+            
+            <div class="terms-scroll" style="height:120px; overflow-y:auto; border:1px solid var(--border); padding:12px; font-size:12px; color:var(--text-sub); margin:10px 0; border-radius:8px; background:var(--bg-dark); line-height:1.6;">
+                <h4 style="color:var(--text-main); margin-bottom:5px;">Friend Station 利用規約</h4>
+                <p>本規約は、本サービスを利用する全てのユーザーに適用されます。本サービスを利用した時点で、以下の全条項に同意したものとみなされます。</p>
+                <h4 style="color:var(--text-main); margin-top:10px; margin-bottom:5px;">第1条（運営者の広範な裁量権）</h4>
+                <p>運営者は、本サービスの仕様変更、停止、またはアカウントの削除を、理由を問わず、事前の予告なくいつでも行うことができます。</p>
+                <p>運営者は、ユーザーが作成したコンテンツ（投稿、チャット、ノート等）の監視・削除・改変を、独自の裁量で制限なく行う権利を有します。</p>
+                <h4 style="color:var(--text-main); margin-top:10px; margin-bottom:5px;">第2条（完全免責）</h4>
+                <p>運営者は、本サービスの利用によりユーザーに生じた損害（データ消失、通信障害、システムダウン、端末の故障、プライバシー漏洩、ユーザー間トラブル、精神的苦痛を含むがこれらに限定されない）について、故意または重過失がない限り、一切の賠償責任を負いません。</p>
+                <p>運営者に賠償責任が生じる場合であっても、賠償額は、ユーザーが過去1ヶ月間に本サービスに対して支払った利用料金の合計額を上限とします（利用料金が無料の場合は、賠償額は0円とします）。</p>
+                <h4 style="color:var(--text-main); margin-top:10px; margin-bottom:5px;">第3条（管轄裁判所）</h4>
+                <p>本規約に関連する全ての紛争は、運営者の所在地を管轄する地方裁判所を第一審の専属的合意管轄裁判所とします。</p>
+                <h4 style="color:var(--text-main); margin-top:10px; margin-bottom:5px;">プライバシーポリシー（運営権限最大化型）</h4>
+                <p>1. 取得情報の範囲と目的<br>当サービスは、ユーザーが入力した氏名、学校情報、位置情報、IPアドレス、端末情報、全送受信メッセージ、投稿履歴、いいね履歴、通話履歴等の全情報を取得・保存します。これらはサービスの提供、セキュリティ維持、および運営者が適切と判断する目的で利用されます。</p>
+                <p>2. 管理者による全データ閲覧の承諾<br>ユーザーは、運営者がデータベースに直接アクセスし、ユーザー間の「全てのプライベートな通信（個別チャット・通話内容等）」を閲覧、記録、分析することに明確に同意します。本サービスにおいて「プライバシー」とは、第三者に対する秘密を指すものであり、運営者に対する秘密を指すものではありません。</p>
+                <p>3. 法令順守と情報開示<br>捜査機関や裁判所等の公的機関から適法な手順による開示請求があった場合、運営者はユーザーの同意を得ることなく、保有する全ての情報を開示します。</p>
+            </div>
+            
+            <button type="button" class="auth-link" onclick="showTermsModal()" style="margin-bottom:15px; font-size:12px;">利用規約の詳細を読む</button>
+            <label style="font-size:12px;color:var(--text-main);display:flex;align-items:center;gap:8px;margin-bottom:15px;"><input type="checkbox" id="r-agree" required style="width:auto;margin:0;accent-color:var(--accent);">利用規約およびプライバシーポリシーに同意する</label>
+            
+            <button type="submit" style="width:100%;" onclick="submitRegistration()">登録</button>
+            <button type="button" class="auth-link" onclick="nextStep(3)">戻る</button>
+        </div>
+    </form>
+    <form onsubmit="submitTrans(event); return false;" id="form-trans" class="hidden">
+        <input type="text" id="t-user" placeholder="ユーザーID" required>
+        <input type="text" id="t-code" placeholder="引継ぎコード" required>
+        <button type="submit" style="width:100%;">復元ログイン</button>
+        <button type="button" class="auth-link" onclick="toggleAuth('login')" style="width:100%;margin-top:15px;">戻る</button>
+    </form>
+</div>
+
+<div id="scr-pending" class="hidden">
+    <h2 style="color:var(--accent);margin-bottom:15px;font-size:2em;text-align:center;">承認待ち</h2>
+    <div class="loader"></div>
+    <p style="color:var(--text-main);margin-bottom:10px;text-align:center;font-weight:bold;">管理者の承認を待っています...</p>
+    <p style="font-size:13px;color:var(--text-sub);margin-bottom:25px;text-align:center;line-height:1.5;">この画面のままお待ちください。<br>承認されると自動的にログインします。</p>
+    <button type="button" onclick="logout()" class="danger" style="width:100%;">キャンセルして戻る</button>
+</div>
+
+<div id="scr-main" class="hidden">
+    <div class="sidebar">
+        <div class="brand"><img src="./tag.jpg" onerror="this.src='./tag.jpg'" style="width:28px;height:28px;border-radius:6px;margin-right:10px;">Friend Station</div>
+        <button type="button" class="nav-btn" id="nav-home" onclick="switchNav('home')"><i class="fa-solid fa-house"></i> <span>ホーム</span></button>
+        <button type="button" class="nav-btn" id="nav-chat" onclick="switchNav('chat')"><i class="fa-solid fa-message"></i> <span>メッセージ</span><div id="notif-badge" class="badge hidden">0</div></button>
+        <button type="button" class="nav-btn" id="nav-search" onclick="switchNav('search')"><i class="fa-solid fa-magnifying-glass"></i> <span>検索</span></button>
+        <button type="button" class="nav-btn" id="nav-notif" onclick="switchNav('notif')"><i class="fa-solid fa-bell"></i> <span>通知</span><div id="notif-bell-badge" class="badge hidden">0</div></button>
+        <button type="button" class="nav-btn" onclick="toggleMenu()" style="margin-top:auto;"><i class="fa-solid fa-bars"></i> <span>その他</span></button>
+    </div>
+
+    <div id="slide-menu">
+        <h3 style="margin-bottom:15px;border-bottom:1px solid var(--border);padding-bottom:15px;">メニュー</h3>
+        <div class="menu-item" onclick="openProfileModal(myInfo.id, myInfo.username, myInfo.nickname, myInfo.icon_url, myInfo.status_message)"><i class="fa-solid fa-user"></i> プロフィール</div>
+        <div class="menu-item" onclick="switchMainPanel('settings')"><i class="fa-solid fa-gear"></i> 設定・移行</div>
+        <div class="menu-item" onclick="switchMainPanel('notif-settings')"><i class="fa-solid fa-bell"></i> 通知・着信</div>
+        <div class="menu-item" onclick="switchMainPanel('qr')"><i class="fa-solid fa-mobile-screen"></i> My QR</div>
+        <div class="menu-item" onclick="openSelectFriendsModal('group')"><i class="fa-solid fa-user-group"></i> グループ作成</div>
+        <div class="menu-item" onclick="openSelectFriendsModal('close')"><i class="fa-solid fa-lock"></i> 親しい友達リスト設定</div>
+        <div class="menu-item" onclick="openBlockListModal()"><i class="fa-solid fa-ban"></i> ブロック一覧</div>
+        <div class="menu-item" onclick="showTermsModal()"><i class="fa-solid fa-file-contract"></i> 利用規約・プライバシー</div>
+        <div class="menu-item danger" onclick="logout()" style="margin-top:auto;color:#fff;"><i class="fa-solid fa-right-from-bracket"></i> ログアウト</div>
+        <div style="margin-top:20px;padding-top:15px;border-top:1px solid var(--border);font-size:13px;color:var(--text-sub);line-height:1.6;">
+            <div>©Friend Station 2026</div>
+            <div>クレジット: OtoLogic</div>
+        </div>
+    </div>
+
+    <div class="list-panel" id="list-panel">
+        <div id="panel-chat" class="scroll-area">
+            <div class="panel-header">メッセージ</div>
+            <div class="notes-area">
+                <form onsubmit="submitNote(event); return false;" id="form-note" style="display:flex;gap:8px;margin-bottom:10px;">
+                    <select id="note-vis" style="border-radius:20px;padding:8px 12px;width:auto;background:var(--bg-panel);color:var(--text-main);border:1px solid var(--border);">
+                        <option value="public">全体</option>
+                        <option value="friends">👥 フレンド</option>
+                        <option value="close">🔒 親しい</option>
+                    </select>
+                    <input type="text" id="note-input" placeholder="いまの気分を投稿..." maxlength="60" style="padding:10px 15px;margin:0;border-radius:20px;flex:1;" required>
+                    <button type="submit" style="padding:10px 16px;border-radius:20px;"><i class="fa-solid fa-plus"></i></button>
+                </form>
+                <div class="notes-list" id="ui-notes"></div>
+            </div>
+            <div class="room-list" id="ui-rooms"></div>
+            <div class="room-list" id="ui-groups" style="border-top:1px solid var(--border);"></div>
+        </div>
+        <div id="panel-search" class="hidden scroll-area">
+            <div class="panel-header">ユーザー検索</div>
+            <div style="padding:20px;"><form onsubmit="execSearch(event); return false;" id="form-search" style="display:flex;gap:8px;"><input type="text" id="s-query" placeholder="キーワード..." style="margin:0;border-radius:20px;" required><button type="submit" style="border-radius:20px;">検索</button></form><div id="ui-search-res" style="margin-top:25px;"></div></div>
+        </div>
+        <div id="panel-notif" class="hidden scroll-area">
+            <div class="panel-header">通知</div>
+            <ul id="ui-notifs" style="list-style:none;padding:0;"></ul>
+        </div>
+    </div>
+
+    <div class="main-panel-container" id="main-container">
+        <div id="main-chat" class="main-screen active">
+            <button type="button" id="btn-back-chat" class="hidden" onclick="closeChatMobile()" style="position:absolute;top:15px;left:15px;z-index:10;background:rgba(0,0,0,0.6);backdrop-filter:blur(5px);border-radius:50%;width:44px;height:44px;padding:0;"><i class="fa-solid fa-arrow-left"></i></button>
+            <div id="chat-empty" style="flex:1; background:var(--bg-dark);"></div>
+            <div id="chat-active" class="hidden" style="display:flex;flex-direction:column;height:100%;">
+                <div class="chat-header">
+                    <div style="display:flex;align-items:center;gap:15px;cursor:pointer;margin-left:45px;" onclick="showCurrentProfile()">
+                        <div style="position:relative;">
+                            <img id="chat-target-icon" src="" onerror="this.src='./icon.jpeg'" style="width:44px;height:44px;border-radius:50%;object-fit:cover;">
+                            <div class="online-badge" id="chat-target-online"></div>
+                        </div>
+                        <div><h3 id="chat-title" style="font-size:18px;">相手</h3></div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:12px;position:relative;">
+                        <form onsubmit="execChatSearch(event); return false;" id="form-chat-search" class="chat-search-bar hidden"><input type="text" id="chat-s-query" placeholder="履歴検索" required><span onclick="hide('form-chat-search');show('btn-chat-search')" style="cursor:pointer;padding:0 5px;"><i class="fa-solid fa-xmark"></i></span></form>
+                        <button type="button" id="btn-chat-search" onclick="show('form-chat-search');hide('btn-chat-search')" style="background:transparent;font-size:18px;padding:5px;"><i class="fa-solid fa-magnifying-glass"></i></button>
+                        <button type="button" onclick="startTextCall()" style="background:transparent;font-size:20px;padding:5px;"><i class="fa-solid fa-message"></i></button>
+                        <button type="button" onclick="startRtcCall('voice')" style="background:transparent;font-size:20px;padding:5px;"><i class="fa-solid fa-phone"></i></button> 
+                        <button type="button" onclick="startRtcCall('video')" style="background:transparent;font-size:20px;padding:5px;"><i class="fa-solid fa-video"></i></button>
+                        <button type="button" onclick="toggleChatMenu(event)" style="background:transparent;font-size:20px;padding:5px;"><i class="fa-solid fa-ellipsis-vertical"></i></button>
+                        <div id="chat-menu" class="hidden" style="position:fixed; top:70px; right:20px; background:var(--bg-panel); border:1px solid var(--border); border-radius:12px; z-index:2147483647; box-shadow:0 5px 15px rgba(0,0,0,0.5); white-space:nowrap;">
+                            <div class="ctx-item" id="chat-menu-add-member" onclick="openSelectFriendsModal('add_group_member')"><i class="fa-solid fa-user-plus"></i> メンバーを追加</div>
+                            <div class="ctx-item danger" onclick="execChatMenuAction()"><i class="fa-solid fa-ban"></i> <span id="chat-menu-action-text">ブロック</span></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="chat-box" id="ui-msgs" onscroll="saveScroll('chat', this)"></div>
+                <div class="chat-input-area">
+                    <div id="reply-preview" class="hidden"><span>返信先: <strong id="rp-name" style="color:var(--accent);"></strong> <span id="rp-text"></span></span><span style="cursor:pointer;font-size:18px;padding:0 8px;" onclick="cancelReply()"><i class="fa-solid fa-xmark"></i></span></div>
+                    <div id="edit-preview" class="hidden"><span>編集中: <span id="ed-text" style="color:var(--accent);"></span></span><span style="cursor:pointer;font-size:18px;padding:0 8px;" onclick="cancelEdit()"><i class="fa-solid fa-xmark"></i></span></div>
+                    <div id="typing-indicator" style="font-size:12px;color:var(--accent);height:14px;margin-bottom:4px;"></div>
+                    <div class="chat-input-row">
+                        <label style="cursor:pointer;font-size:22px;margin-bottom:0;color:var(--accent);"><i class="fa-solid fa-image"></i><input type="file" id="chat-file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime" class="hidden" onchange="previewMedia(this, 'chat-file-preview', 'chat-file-preview-vid', 'chat-f-status')"></label>
+                        <img id="chat-file-preview" src="" style="width:40px;height:40px;object-fit:cover;border-radius:8px;display:none;border:1px solid var(--border);">
+                        <span id="chat-f-status" class="file-status"></span>
+                        <input type="text" id="msg-input" placeholder="メッセージを入力..." autocomplete="off">
+                        <button type="button" id="btn-send-msg" style="border-radius:24px;padding:12px 24px;">送信</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="main-home" class="main-screen hidden scroll-area" onscroll="saveScroll('home', this)">
+            <div style="padding:20px 25px;font-size:1.6em;font-weight:bold;border-bottom:1px solid var(--border);position:sticky;top:0;background:rgba(0,0,0,0.8);backdrop-filter:blur(10px);z-index:2;">ホーム</div>
+            <div style="padding:20px 25px;border-bottom:1px solid var(--border);">
+                <div style="display:flex;gap:15px;">
+                    <img id="home-my-icon" src="" onerror="this.src='./icon.jpeg'" style="width:50px;height:50px;border-radius:50%;object-fit:cover;">
+                    <div style="flex:1;">
+                        <textarea id="post-text" placeholder="いまどうしてる？ (1日5回まで)" rows="2" style="border:none;background:transparent;resize:none;font-size:18px;padding:5px 0;"></textarea>
+                        <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);padding-top:15px;margin-top:5px;">
+                            <div style="display:flex;align-items:center;gap:15px;">
+                                <label style="cursor:pointer;color:var(--accent);font-size:22px;"><i class="fa-solid fa-image"></i><input type="file" id="post-file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime" class="hidden" onchange="previewMedia(this, 'post-file-preview', 'post-file-preview-vid', 'post-f-status')"></label>
+                                <img id="post-file-preview" src="" style="width:50px;height:50px;object-fit:cover;border-radius:10px;display:none;border:1px solid var(--border);">
+                                <select id="post-vis" style="border-radius:20px;padding:8px 12px;width:auto;background:var(--bg-panel);color:var(--text-main);border:1px solid var(--border);">
+                                    <option value="public">全体</option>
+                                    <option value="friends">👥 フレンド限定</option>
+                                    <option value="close">🔒 親しい友達</option>
+                                </select>
+                                <span id="post-f-status" class="file-status"></span>
+                            </div>
+                            <button type="button" onclick="submitPost();" style="border-radius:24px;padding:10px 20px;">ポストする</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id="ui-timeline"></div>
+        </div>
+
+        <div id="main-settings" class="main-screen hidden scroll-area" style="padding:40px;">
+            <h2 style="margin-bottom:25px;border-bottom:1px solid var(--border);padding-bottom:15px;">設定・プロフィール</h2>
+            <div style="margin-bottom:30px;display:flex;align-items:center;gap:20px;">
+                <img id="my-icon-set" src="" onerror="this.src='./icon.jpeg'" style="width:90px;height:90px;border-radius:50%;object-fit:cover;border:3px solid var(--accent);">
+                <label style="cursor:pointer;color:var(--accent);font-weight:bold;padding:12px 20px;border:1px solid var(--accent);border-radius:24px;transition:all 0.3s;">アイコン変更<input type="file" accept="image/*" class="hidden" onchange="uploadIcon(this)"></label>
+            </div>
+            <label style="font-size:13px;color:var(--text-sub);">ユーザーID (変更は30日に1回のみ)</label>
+            <div style="display:flex;gap:12px;align-items:center;margin-bottom:15px;"><input type="text" id="set-id" style="margin:0;"><button type="button" onclick="updateProfile('username', id('set-id').value)">保存</button><span class="saved-check" id="sc-id">✔ 保存済</span></div>
+            <label style="font-size:13px;color:var(--text-sub);">ニックネーム</label>
+            <div style="display:flex;gap:12px;align-items:center;margin-bottom:15px;"><input type="text" id="set-nick" style="margin:0;"><button type="button" onclick="updateProfile('nickname', id('set-nick').value)">保存</button><span class="saved-check" id="sc-nick">✔ 保存済</span></div>
+            <label style="font-size:13px;color:var(--text-sub);">自己紹介</label>
+            <div style="display:flex;gap:12px;align-items:flex-start;"><textarea id="set-status" rows="3" style="margin:0;"></textarea><button type="button" onclick="updateProfile('status_message', id('set-status').value)">保存</button><span class="saved-check" id="sc-status">✔ 保存済</span></div>
+            
+            <h3 style="margin-top:40px;margin-bottom:15px;border-bottom:1px solid var(--border);padding-bottom:10px;">セキュリティ</h3>
+            <form onsubmit="requestPwChange(event); return false;" id="form-pw-req" style="display:flex;gap:12px;margin-top:15px;"><input type="password" id="set-new-pw" placeholder="新しいパスワード" required style="margin:0;"><button type="submit">変更申請</button></form>
+
+            <h3 style="margin-top:40px;margin-bottom:15px;border-bottom:1px solid var(--border);padding-bottom:10px;">データ移行 (預け入れ)</h3>
+            <p style="font-size:14px;color:var(--text-sub);margin-bottom:15px;line-height:1.5;">ブラウザ内の全チャット履歴をサーバーに一時預かりします。新端末で引き出すと自動で削除されます。</p>
+            <button type="button" onclick="pushBackup()" style="width:100%;border-radius:16px;padding:16px;font-size:16px;"><i class="fa-solid fa-box-archive"></i> IndexedDBデータをサーバーに預ける</button>
+            <div id="transfer-code" style="text-align:center;font-size:1.8em;color:var(--accent);font-weight:bold;margin:25px;letter-spacing:2px;"></div>
+        </div>
+
+        <div id="main-notif-settings" class="main-screen hidden scroll-area" style="padding:40px;">
+            <h2 style="margin-bottom:25px;border-bottom:1px solid var(--border);padding-bottom:15px;">通知・着信設定</h2>
+            
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; font-size:15px;">
+                <span>ブラウザ通知を許可</span>
+                <label class="switch"><input type="checkbox" id="set-notif" onchange="toggleSetting('notif', this.checked)"><span class="slider"></span></label>
+            </div>
+
+            <h3 style="margin-top:30px;margin-bottom:15px;border-bottom:1px solid var(--border);padding-bottom:10px;">通知音</h3>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; font-size:15px;">
+                <span>通知音を鳴らす</span>
+                <label class="switch"><input type="checkbox" id="set-sound" onchange="toggleSetting('sound', this.checked)"><span class="slider"></span></label>
+            </div>
+            <div style="margin-bottom:15px;">
+                <select id="set-notif-sound" onchange="toggleSetting('notif-sound', this.value); playSample(this.value);" style="margin:0;">
+                    <option value="tuuti1.mp3">通知音 1</option>
+                    <option value="tuuti2.mp3">通知音 2</option>
+                    <option value="tuuti3.mp3">通知音 3</option>
+                </select>
+            </div>
+
+            <h3 style="margin-top:30px;margin-bottom:15px;border-bottom:1px solid var(--border);padding-bottom:10px;">着信音</h3>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; font-size:15px;">
+                <span>着信音を鳴らす</span>
+                <label class="switch"><input type="checkbox" id="set-call-sound" onchange="toggleSetting('call-sound', this.checked)"><span class="slider"></span></label>
+            </div>
+            <div style="margin-bottom:15px;">
+                <select id="set-call-sound-file" onchange="toggleSetting('call-sound-file', this.value); playSample(this.value);" style="margin:0;">
+                    <option value="call1.mp3">着信音 1</option>
+                    <option value="call2.mp3">着信音 2</option>
+                    <option value="call3.mp3">着信音 3</option>
+                </select>
+            </div>
+            <div style="margin-top:20px;padding-top:15px;border-top:1px solid var(--border);font-size:13px;color:var(--text-sub);">
+                提供：OtoLogic / 音源：OtoLogic
+            </div>
+        </div>
+
+        <div id="main-qr" class="main-screen hidden scroll-area" style="padding:40px;text-align:center;">
+            <h2 style="margin-bottom:25px;">My QRコード</h2><p style="color:var(--text-sub);margin-bottom:30px;font-size:16px;">ID: <strong id="my-id-disp" style="color:var(--text-main);"></strong></p>
+            <div style="background:#fff;padding:20px;border-radius:20px;display:inline-block;margin-bottom:40px;box-shadow:0 10px 30px rgba(0,0,0,0.5);"><canvas id="my-qr"></canvas></div>
+            <div style="border-top:1px solid var(--border);padding-top:30px;">
+                <button type="button" onclick="startQRScanner()" style="border-radius:24px;width:100%;max-width:300px;padding:15px;font-size:16px;"><i class="fa-solid fa-camera"></i> QRを読み込む</button>
+                <div id="reader" class="hidden" style="margin-top:20px;border-radius:16px;overflow:hidden;border:1px solid var(--border);"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="modal-block-list" class="modal-overlay hidden" onclick="if(event.target===this)hide('modal-block-list')">
+    <div class="modal" style="max-height:60vh;">
+        <span class="close-btn" onclick="hide('modal-block-list')"><i class="fa-solid fa-xmark"></i></span>
+        <h3 style="margin-bottom:15px;border-bottom:1px solid var(--border);padding-bottom:15px;">ブロック一覧</h3>
+        <div id="block-list-content" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;"></div>
+    </div>
+</div>
+
+<div id="modal-note-post" class="modal-overlay hidden" onclick="if(event.target===this)hide('modal-note-post')">
+    <div class="modal">
+        <span class="close-btn" onclick="hide('modal-note-post')"><i class="fa-solid fa-xmark"></i></span>
+        <h3 style="margin-bottom:20px; text-align:center;"><i class="fa-solid fa-pen-nib"></i> いまの気分</h3>
+        <form onsubmit="submitNotePostModal(event); return false;" style="display:flex; flex-direction:column; gap:15px;">
+            <textarea id="modal-note-input" placeholder="いま何してる？ (60文字以内)" maxlength="60" rows="3" required></textarea>
+            <select id="modal-note-vis">
+                <option value="public">🌐 全体公開</option>
+                <option value="friends">👥 フレンド限定</option>
+                <option value="close">🔒 親しい友達のみ</option>
+            </select>
+            <button type="submit" style="width:100%; padding:14px;"><i class="fa-solid fa-paper-plane"></i> 投稿する</button>
+        </form>
+    </div>
+</div>
+
+<div id="modal-note-view" class="modal-overlay hidden" onclick="if(event.target===this)hide('modal-note-view')">
+    <div class="modal" style="background:var(--bg-dark); max-width:380px; height:85vh; border-radius:20px; display:flex; flex-direction:column; padding:0; overflow:hidden;">
+        <div style="padding:15px 20px; display:flex; align-items:center; gap:12px; border-bottom:1px solid var(--border); background:var(--bg-panel);">
+            <img id="nv-icon" src="" onerror="this.src='./icon.jpeg'" style="width:44px; height:44px; border-radius:50%; object-fit:cover; border:2px solid var(--accent);">
+            <div style="flex:1; font-weight:bold; font-size:16px;" id="nv-name"></div>
+            <button type="button" id="nv-del-btn" class="hidden" style="background:transparent; color:var(--danger); border:none; font-size:18px; padding:5px;"><i class="fa-solid fa-trash"></i></button>
+            <span class="close-btn" style="position:static;" onclick="hide('modal-note-view')"><i class="fa-solid fa-xmark"></i></span>
+        </div>
+        <div style="flex:1; display:flex; align-items:center; justify-content:center; padding:30px; text-align:center; font-size:26px; font-weight:bold; word-break:break-word; background:linear-gradient(135deg, #1a1c20 0%, #0d0e12 100%);" id="nv-content"></div>
+        <div style="padding:20px; display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border); background:var(--bg-panel); gap:15px;" id="nv-footer">
+            <div id="nv-reply-btn" style="flex:1; background:var(--bg-hover); padding:14px; border-radius:24px; text-align:center; cursor:pointer; font-weight:bold; transition:0.2s;"><i class="fa-solid fa-message"></i> メッセージを送信</div>
+            <div id="nv-like-btn" style="font-size:28px; cursor:pointer; width:50px; text-align:center; transition:transform 0.2s;">🤍</div>
+            <div id="nv-like-list-btn" class="hidden" style="flex:1; background:var(--bg-hover); padding:14px; border-radius:24px; text-align:center; cursor:pointer; font-weight:bold; transition:0.2s;"><i class="fa-solid fa-heart"></i> いいね一覧</div>
+        </div>
+    </div>
+</div>
+
+<div id="context-menu" class="hidden">
+    <div class="ctx-item" id="ctx-reply"><i class="fa-solid fa-reply"></i> リプライ</div>
+    <div class="ctx-item" id="ctx-edit" class="hidden"><i class="fa-solid fa-pen"></i> 編集</div>
+    <div class="ctx-item" id="ctx-delete" class="hidden" style="color:var(--danger);"><i class="fa-solid fa-trash"></i> 取消</div>
+</div>
+
+<div id="reaction-menu" class="hidden" style="position:fixed;background:var(--bg-panel);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,0.8);z-index:2500;padding:8px;display:flex;gap:8px;">
+    <button type="button" class="emoji-btn" onclick="sendReaction('❤️')">❤️</button>
+    <button type="button" class="emoji-btn" onclick="sendReaction('😂')">😂</button>
+    <button type="button" class="emoji-btn" onclick="sendReaction('😮')">😮</button>
+    <button type="button" class="emoji-btn" onclick="sendReaction('😢')">😢</button>
+    <button type="button" class="emoji-btn" onclick="sendReaction('👍')">👍</button>
+</div>
+
+<div id="modal-prof" class="modal-overlay hidden" onclick="if(event.target===this)hide('modal-prof')">
+    <div class="modal">
+        <span class="close-btn" onclick="hide('modal-prof')"><i class="fa-solid fa-xmark"></i></span>
+        <img id="mp-icon" class="prof-lg" src="" onerror="this.src='./icon.jpeg'">
+        <h2 id="mp-name" style="margin-bottom:8px;text-align:center;"></h2><p style="color:var(--text-sub);margin-bottom:20px;font-size:15px;text-align:center;">@<span id="mp-id"></span></p>
+        <p id="mp-status" style="font-size:16px;word-break:break-word;margin-bottom:20px;line-height:1.5;text-align:center;padding:0 15px;"></p>
+        <div id="mp-action-area" style="text-align:center; margin-bottom:10px; display:none; justify-content:center; gap:10px;"></div>
+    </div>
+</div>
+
+<div id="modal-select-friends" class="modal-overlay hidden" onclick="if(event.target===this)hide('modal-select-friends')">
+    <div class="modal">
+        <span class="close-btn" onclick="hide('modal-select-friends')"><i class="fa-solid fa-xmark"></i></span>
+        <h3 id="msf-title" style="margin-bottom:15px;"></h3>
+        <div id="msf-extra-input"></div>
+        <div id="msf-list" style="max-height:40vh;overflow-y:auto;margin:20px 0;display:flex;flex-direction:column;gap:10px;"></div>
+        <button type="button" id="msf-submit" style="width:100%;border-radius:12px;padding:14px;font-size:16px;">決定</button>
+    </div>
+</div>
+
+<div id="modal-comments" class="modal-overlay hidden" onclick="if(event.target===this)hide('modal-comments')">
+    <div class="modal" style="height:85vh;max-width:500px;">
+        <span class="close-btn" onclick="hide('modal-comments')"><i class="fa-solid fa-xmark"></i></span>
+        <h3 style="margin-bottom:15px;border-bottom:1px solid var(--border);padding-bottom:15px;">コメント</h3>
+        <div id="comments-list"></div>
+        <div style="display:flex;align-items:center;gap:12px;border-top:1px solid var(--border);padding-top:15px;">
+            <form onsubmit="submitComment(event); return false;" id="form-comment" style="display:flex;width:100%;align-items:center;gap:12px;">
+                <label style="cursor:pointer;font-size:24px;margin:0;color:var(--accent);"><i class="fa-solid fa-camera"></i><input type="file" id="c-file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime" class="hidden" onchange="previewMedia(this, 'c-file-preview', 'c-file-preview-vid', 'c-f-status')"></label>
+                <img id="c-file-preview" src="" style="width:44px;height:44px;object-fit:cover;border-radius:8px;display:none;border:1px solid var(--border);">
+                <span id="c-f-status" class="file-status"></span>
+                <input type="text" id="c-text" placeholder="コメントを追加..." style="margin:0;border-radius:24px;flex:1;padding:12px 18px;">
+                <button type="submit" style="border-radius:24px;padding:12px 20px;">送信</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div id="modal-post-detail" class="modal-overlay hidden" onclick="if(event.target===this)hide('modal-post-detail')">
+    <div class="modal" style="height:85vh;max-width:600px; padding:0; display:flex; flex-direction:column;">
+        <div style="padding:15px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:var(--bg-panel); z-index:10;">
+            <h3 style="margin:0; font-size:1.2em;">ポスト詳細</h3>
+            <span class="close-btn" style="position:static;" onclick="hide('modal-post-detail')"><i class="fa-solid fa-xmark"></i></span>
+        </div>
+        <div style="flex:1; overflow-y:auto; padding:20px;">
+            <div id="pd-post-content" style="border-bottom:1px solid var(--border); padding-bottom:20px; margin-bottom:20px;"></div>
+            <h4 style="margin-bottom:15px; color:var(--text-sub); font-size:14px;"><i class="fa-solid fa-heart"></i> いいねしたユーザー</h4>
+            <div id="pd-likes-list" style="display:flex; flex-direction:column; gap:10px; padding-bottom:20px; border-bottom:1px solid var(--border); margin-bottom:20px; max-height: 150px; overflow-y:auto;"></div>
+            <h4 style="margin-bottom:15px; color:var(--text-sub); font-size:14px;"><i class="fa-solid fa-comments"></i> コメント</h4>
+            <div id="pd-comments-list" style="display:flex; flex-direction:column; gap:15px;"></div>
+        </div>
+        <div style="padding:15px 20px; border-top:1px solid var(--border); background:var(--bg-panel);">
+            <form onsubmit="submitComment(event); return false;" id="form-pd-comment" style="display:flex; width:100%; align-items:center; gap:12px;">
+                <label style="cursor:pointer;font-size:24px;margin:0;color:var(--accent);"><i class="fa-solid fa-camera"></i><input type="file" id="pd-c-file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime" class="hidden" onchange="previewMedia(this, 'pd-c-file-preview', 'pd-c-file-preview-vid', 'pd-c-f-status')"></label>
+                <img id="pd-c-file-preview" src="" style="width:40px;height:40px;object-fit:cover;border-radius:8px;display:none;border:1px solid var(--border);">
+                <span id="pd-c-f-status" class="file-status hidden"></span>
+                <input type="text" id="pd-c-text" placeholder="返信をポスト..." style="margin:0;border-radius:24px;flex:1;padding:12px 18px;">
+                <button type="submit" style="border-radius:24px;padding:10px 20px;">送信</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div id="modal-media-view" class="modal-overlay hidden" onclick="if(event.target===this)closeMediaModal()">
+    <div class="modal" style="max-width:90%;max-height:90%;padding:0;background:transparent;border:none;box-shadow:none;position:relative;overflow:hidden;">
+        <span class="close-btn" style="position:absolute;top:15px;right:20px;z-index:10;" onclick="event.stopPropagation(); closeMediaModal();"><i class="fa-solid fa-xmark"></i></span>
+        <img id="mv-img" src="" style="max-width:100%;max-height:100%;display:block;margin:auto;border-radius:20px;">
+        <video id="mv-video" controls style="max-width:100%;max-height:100%;display:none;margin:auto;border-radius:20px;"></video>
+    </div>
+</div>
+
+<div id="modal-interactions" class="modal-overlay hidden" onclick="if(event.target===this)hide('modal-interactions')">
+    <div class="modal" style="max-height:60vh;">
+        <span class="close-btn" onclick="hide('modal-interactions')"><i class="fa-solid fa-xmark"></i></span>
+        <h3 style="margin-bottom:15px;border-bottom:1px solid var(--border);padding-bottom:15px;">アクション</h3>
+        <div id="interactions-list" style="flex:1;overflow-y:auto;text-align:left;font-size:15px;line-height:1.6;"></div>
+    </div>
+</div>
+
+<div id="modal-search-res" class="modal-overlay hidden" onclick="if(event.target===this)hide('modal-search-res')">
+    <div class="modal" style="max-height:80vh;overflow-y:auto;text-align:left;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;"><h3 style="font-size:1.4em;">検索結果</h3><span class="close-btn" style="position:static;" onclick="hide('modal-search-res')"><i class="fa-solid fa-xmark"></i></span></div>
+        <div id="chat-search-out"></div>
+    </div>
+</div>
+
+<div id="modal-calling" class="modal-overlay hidden">
+    <div class="modal" style="text-align:center;padding:40px 20px;">
+        <h3 id="calling-name" style="margin-bottom:15px;font-size:28px;"></h3>
+        <p style="color:var(--accent);margin-bottom:35px;font-weight:bold;font-size:18px;letter-spacing:1px;"><i class="fa-solid fa-phone-volume fa-shake"></i> 発信中...</p>
+        <button type="button" class="danger" onclick="cancelCall()" style="border-radius:24px;padding:14px 40px;font-size:16px;">キャンセル</button>
+    </div>
+</div>
+
+<div id="modal-incoming" class="modal-overlay hidden">
+    <div class="modal" style="text-align:center;padding:40px 20px;">
+        <h3 id="caller-name" style="margin-bottom:15px;font-size:28px;"></h3><p id="call-type-txt" style="color:var(--accent);margin-bottom:35px;font-weight:bold;font-size:18px;"></p>
+        <div style="display:flex;gap:20px;justify-content:center;">
+            <button type="button" class="danger" onclick="answerCallSession(false)" style="flex:1;max-width:150px;border-radius:24px;padding:14px;font-size:16px;">拒否</button>
+            <button type="button" class="success" onclick="answerCallSession(true)" style="flex:1;max-width:150px;border-radius:24px;padding:14px;font-size:16px;">応答</button>
+        </div>
+    </div>
+</div>
+
+<div id="modal-terms" class="modal-overlay hidden" onclick="if(event.target===this)hide('modal-terms')">
+    <div class="modal" style="max-height:85vh; overflow-y:auto; text-align:left; max-width:600px; padding:30px;">
+        <span class="close-btn" onclick="hide('modal-terms')"><i class="fa-solid fa-xmark"></i></span>
+        <h2 style="margin-bottom:20px; border-bottom:1px solid var(--border); padding-bottom:15px; text-align:center;">利用規約・プライバシーポリシー</h2>
+        <div style="font-size:14px; line-height:1.7; color:var(--text-sub);">
+            <h3 style="color:var(--text-main); margin-top:15px; font-size:16px;">Friend Station 利用規約</h3>
+            <p>本規約は、本サービスを利用する全てのユーザーに適用されます。本サービスを利用した時点で、以下の全条項に同意したものとみなされます。</p>
+            <h4 style="color:var(--text-main); margin-top:20px;">第1条（運営者の広範な裁量権）</h4>
+            <p>運営者は、本サービスの仕様変更、停止、またはアカウントの削除を、理由を問わず、事前の予告なくいつでも行うことができます。</p>
+            <p>運営者は、ユーザーが作成したコンテンツ（投稿、チャット、ノート等）の監視・削除・改変を、独自の裁量で制限なく行う権利を有します。</p>
+            <h4 style="color:var(--text-main); margin-top:20px;">第2条（完全免責）</h4>
+            <p>運営者は、本サービスの利用によりユーザーに生じた損害（データ消失、通信障害、システムダウン、端末の故障、プライバシー漏洩、ユーザー間トラブル、精神的苦痛を含むがこれらに限定されない）について、故意または重過失がない限り、一切の賠償責任を負いません。</p>
+            <p>運営者に賠償責任が生じる場合であっても、賠償額は、ユーザーが過去1ヶ月間に本サービスに対して支払った利用料金の合計額を上限とします（利用料金が無料の場合は、賠償額は0円とします）。</p>
+            <h4 style="color:var(--text-main); margin-top:20px;">第3条（管轄裁判所）</h4>
+            <p>本規約に関連する全ての紛争は、運営者の所在地を管轄する地方裁判所を第一審の専属的合意管轄裁判所とします。</p>
+            <h3 style="color:var(--text-main); margin-top:25px; font-size:16px;">プライバシーポリシー（運営権限最大化型）</h3>
+            <h4 style="color:var(--text-main); margin-top:20px;">1. 取得情報の範囲と目的</h4>
+            <p>当サービスは、ユーザーが入力した氏名、学校情報、位置情報、IPアドレス、端末情報、全送受信メッセージ、投稿履歴、いいね履歴、通話履歴等の全情報を取得・保存します。これらはサービスの提供、セキュリティ維持、および運営者が適切と判断する目的で利用されます。</p>
+            <h4 style="color:var(--text-main); margin-top:20px;">2. 管理者による全データ閲覧の承諾</h4>
+            <p>ユーザーは、運営者がデータベースに直接アクセスし、ユーザー間の「全てのプライベートな通信（個別チャット・通話内容等）」を閲覧、記録、分析することに明確に同意します。本サービスにおいて「プライバシー」とは、第三者に対する秘密を指すものであり、運営者に対する秘密を指すものではありません。</p>
+            <h4 style="color:var(--text-main); margin-top:20px;">3. 法令順守と情報開示</h4>
+            <p>捜査機関や裁判所等の公的機関から適法な手順による開示請求があった場合、運営者はユーザーの同意を得ることなく、保有する全ての情報を開示します。</p>
+        </div>
+    </div>
+</div>
+
+<div id="video-overlay" class="hidden">
+    <div id="video-grid"></div>
+    <div class="call-controls">
+        <button type="button" id="btn-mic" class="success" onclick="toggleMic()"><i class="fa-solid fa-microphone"></i> ON</button>
+        <button type="button" id="btn-cam" class="success" onclick="toggleCam()"><i class="fa-solid fa-video"></i> ON</button>
+        <button type="button" id="btn-spk" class="success" onclick="toggleSpk()"><i class="fa-solid fa-volume-high"></i> ON</button>
+        <button type="button" class="call-btn danger" onclick="cancelCall()"><i class="fa-solid fa-phone-slash" style="color: white;"></i></button>
+    </div>
+</div>
+
+<div id="text-call-overlay" class="hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:25px;">
+        <h2><span id="tc-target-name">相手</span> <span style="color:var(--accent);font-size:15px;margin-left:10px;">● 通話中</span></h2>
+        <button type="button" class="danger" onclick="endTextCall()" style="border-radius:20px;padding:10px 25px;">終了</button>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:20px;">
+        <div class="tc-box"><div style="font-size:14px;color:var(--text-sub);margin-bottom:10px;">相手の入力...</div><div id="tc-remote-text"></div></div>
+        <div style="font-size:14px;color:var(--text-sub);margin-bottom:-10px;">自分</div>
+        <textarea id="tc-local-input" placeholder="ここに入力するとリアルタイムに伝わります..."></textarea>
+    </div>
+</div>
+
+<script>
+    // Firebase初期化
+    const firebaseConfig = {
+        apiKey: "AIzaSyDeVPFYsQIwBjHw3zfQnGJvpRFZXj1V8Yk",
+        authDomain: "toway-ee817.firebaseapp.com",
+        databaseURL: "https://toway-ee817-default-rtdb.firebaseio.com",
+        projectId: "toway-ee817",
+        storageBucket: "toway-ee817.firebasestorage.app",
+        messagingSenderId: "1031134467398",
+        appId: "1:1031134467398:web:ece3011fbf763435520147",
+        measurementId: "G-RRGZ3M5LFM"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.database();
+    const storage = firebase.storage();
+
+    // ユーティリティ
+    const fbGet = async (path) => (await db.ref(path).once('value')).val();
+    const fbSet = async (path, val) => await db.ref(path).set(val);
+    const fbPush = async (path, val) => { const r = db.ref(path).push(); await r.set(val); return r.key; };
+    const fbUpdate = async (path, val) => await db.ref(path).update(val);
+    const fbDel = async (path) => await db.ref(path).remove();
+    const uuidv4 = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random()*16|0; return (c==='x'?r:(r&0x3|0x8)).toString(16); });
+
+    let token = localStorage.getItem('token'), myInfo = JSON.parse(localStorage.getItem('myInfo'))||{};
+    let currentRoom = '', currentTarget = '', idb = null;
+    let replyTarget = null, editTargetMsgId = null, ctxTargetMsgId = null, ctxTargetIsMe = false, ctxTargetTimestamp = null;
+    let typingTimers = {}; let typingTimeout;
+    let msgListeners = []; let activeListeners = [];
+    
+    let localStream, callSession = null, incomingData = null, textCallSession = null;
+    let rtcType = 'none'; 
+    let isGroupCall = false;
+    let peers = {}; let streamFlags = { video: true, audio: true };
+    let textCallData = {};
+    
+    let html5QrCode = null, currentPostIdForComment = null, currentModalType = '';
+    let currentNav = localStorage.getItem('activeNav') || 'chat';
+    let currentMain = localStorage.getItem('activeMain') || 'chat';
+    let onlineStatusCache = {}; 
+    let titleBlinkInterval = null;
+    let originalTitle = "Friend Station";
+    let prevNotifIds = new Set();
+    let isFirstLoadNotifs = true;
+    let pendingRead = false;
+    let currentCallAudio = null;
+
+    const id = el => document.getElementById(el), show = el => el && el.classList ? el.classList.remove('hidden') : id(el)?.classList.remove('hidden'), hide = el => el && el.classList ? el.classList.add('hidden') : id(el)?.classList.add('hidden');
+
+    function previewMedia(inp, prevImgId, prevVidId, statusId) {
+        const f = inp.files[0]; const stat = id(statusId);
+        let prevImg = id(prevImgId); let prevVid = id(prevVidId);
+        if (!prevVid) { prevVid = document.createElement('video'); prevVid.id = prevVidId; prevVid.style.width = prevImg.style.width || '40px'; prevVid.style.height = prevImg.style.height || '40px'; prevVid.style.objectFit = 'cover'; prevVid.style.borderRadius = prevImg.style.borderRadius || '8px'; prevVid.style.border = prevImg.style.border || '1px solid var(--border)'; prevVid.style.display = 'none'; prevImg.parentNode.insertBefore(prevVid, prevImg.nextSibling); }
+        if (f) {
+            const allowedImg = ['image/jpeg','image/png','image/gif','image/webp']; const allowedVid = ['video/mp4','video/quicktime'];
+            if (allowedImg.includes(f.type)) { stat.innerText = '添付済'; const r = new FileReader(); r.onload = e => { prevImg.src = e.target.result; prevImg.style.display = 'block'; prevVid.style.display = 'none'; prevVid.src = ''; }; r.readAsDataURL(f); } 
+            else if (allowedVid.includes(f.type)) { stat.innerText = '添付済(動画)'; const r = new FileReader(); r.onload = e => { prevVid.src = e.target.result; prevVid.style.display = 'block'; prevImg.style.display = 'none'; prevImg.src = ''; }; r.readAsDataURL(f); } 
+            else { stat.innerText = ''; prevImg.style.display = 'none'; prevVid.style.display = 'none'; showToast('対応していない形式です'); inp.value = ''; }
+        } else { stat.innerText = ''; prevImg.style.display = 'none'; prevImg.src = ''; prevVid.style.display = 'none'; prevVid.src = ''; }
+    }
+
+    function showToast(msg) { const t = id('toast'); t.innerText = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 3000); }
+    function showConfirm(msg) { return new Promise(resolve => { id('cc-msg').innerText = msg; show('custom-confirm'); id('cc-btn-yes').onclick = () => { hide('custom-confirm'); resolve(true); }; id('cc-btn-no').onclick = () => { hide('custom-confirm'); resolve(false); }; }); }
+
+    function nextStep(n) {
+        const currentStep = document.querySelector('.reg-step:not(.hidden)');
+        if (currentStep && n > parseInt(currentStep.id.replace('step', ''))) { const inputs = currentStep.querySelectorAll('input[required]'); for(let inp of inputs) { if(!inp.checkValidity()) { inp.reportValidity(); return; } } }
+        document.querySelectorAll('.reg-step').forEach(el => el.classList.add('hidden')); id('step' + n).classList.remove('hidden');
+    }
+
+    function toggleAuth(t){ hide('form-login');hide('form-reg');hide('form-trans'); show(`form-${t==='reg'?'reg':t==='trans'?'trans':'login'}`); if(t === 'reg') { document.querySelectorAll('.reg-step').forEach(el => el.classList.add('hidden')); id('step1').classList.remove('hidden'); } }
+
+    function initDB(){ return new Promise((res)=>{ const req=indexedDB.open("FriendStationDB_FB",1); req.onupgradeneeded=e=>{ const db=e.target.result; if(!db.objectStoreNames.contains('messages')){ const s=db.createObjectStore('messages',{keyPath:'msg_id'}); s.createIndex('room_id','room_id',{unique:false}); s.createIndex('timestamp','timestamp',{unique:false}); } }; req.onsuccess=e=>{ idb=e.target.result; res(); }; }); }
+    function idbPutMsg(m){ return new Promise(r=>{ const tx=idb.transaction('messages','readwrite'); tx.objectStore('messages').put(m); tx.oncomplete=r; }); }
+    function idbGetRoomMsgs(r_id){ return new Promise(res=>{ const req=idb.transaction('messages','readonly').objectStore('messages').index('room_id').getAll(r_id); req.onsuccess=()=>res(req.result.sort((a,b)=>a.timestamp-b.timestamp)); }); }
+    function idbGetAllMsgs(){ return new Promise(res=>{ const req=idb.transaction('messages','readonly').objectStore('messages').getAll(); req.onsuccess=()=>res(req.result); }); }
+    function idbClearMsgs(){ return new Promise(r=>{ const tx=idb.transaction('messages','readwrite'); tx.objectStore('messages').clear(); tx.oncomplete=r; }); }
+    function idbUpdateReaction(msgId, reactions) { if(!idb) return; const tx=idb.transaction('messages','readwrite'); const store=tx.objectStore('messages'); const req=store.get(msgId); req.onsuccess=()=>{ const m=req.result; if(m){ m.reactions=JSON.stringify(reactions); store.put(m); } }; }
+    function idbUpdateMsgStatus(msgId, content, isDeleted, history) { if(!idb) return; const tx=idb.transaction('messages','readwrite'); const store=tx.objectStore('messages'); const req=store.get(msgId); req.onsuccess=()=>{ const m=req.result; if(m){ m.content=content; m.is_deleted=isDeleted; m.edit_history=history; store.put(m); } }; }
+
+    function logout(){ 
+        auth.signOut();
+        activeListeners.forEach(r => r.off()); activeListeners=[];
+        localStorage.clear(); token = null; myInfo = {}; currentRoom = ''; currentTarget = ''; html5QrCode = null;
+        id('l-user').value = ''; id('l-pass').value = ''; id('auth-msg').innerText = ''; id('auth-msg').style.display='none';
+        id('ui-msgs').innerHTML = ''; id('ui-rooms').innerHTML = ''; id('ui-groups').innerHTML = ''; id('ui-notes').innerHTML = ''; id('ui-timeline').innerHTML = '';
+        hide('scr-main'); hide('scr-pending'); show('scr-auth'); toggleAuth('login'); id('slide-menu').classList.remove('open');
+    }
+
+    function startPending(uid) {
+        hide('scr-auth'); show('scr-pending');
+        const ref = db.ref(`users/${uid}`);
+        ref.on('value', snap => {
+            const u = snap.val();
+            if(u && u.status === 'approved') {
+                ref.off();
+                if(Notification.permission==="granted" && localStorage.getItem('set-notif')!=='false') new Notification('承認されました',{body:'Friend Stationにログインします'});
+                token = uid; myInfo = u; localStorage.setItem('token', token); localStorage.setItem('myInfo', JSON.stringify(myInfo));
+                hide('scr-pending'); initApp(); 
+            }
+        });
+        activeListeners.push(ref);
+    }
+
+    async function submitLogin(e) {
+        if(e) e.preventDefault(); 
+        const msgDiv = id('auth-msg'); msgDiv.style.display = 'block'; msgDiv.innerText = "接続中...";
+        try {
+            const user = id('l-user').value.trim(); const pass = id('l-pass').value;
+            const email = user + "@friendstation.local";
+            const cred = await auth.signInWithEmailAndPassword(email, pass);
+            const u = await fbGet(`users/${cred.user.uid}`);
+            if(!u) throw new Error("データが見つかりません");
+            if(u.is_banned) throw new Error("アカウントが停止されています");
+            if(u.status === 'pending') { msgDiv.style.display = 'none'; startPending(cred.user.uid); return; }
+            msgDiv.style.display = 'none';
+            token = cred.user.uid; myInfo = u;
+            localStorage.setItem('token', token); localStorage.setItem('myInfo', JSON.stringify(myInfo));
+            await fbUpdate(`users/${token}`, { last_ip: 'Firebase Auth' });
+            initApp();
+        } catch (err) {
+            msgDiv.innerText = err.message.includes('auth') ? 'IDまたはパスワードが違います' : err.message;
+        }
+    }
+
+    async function submitRegistration() {
+        const step4Inputs = id('step4').querySelectorAll('input[required]');
+        for(let inp of step4Inputs) { if(!inp.checkValidity()) { inp.reportValidity(); return; } }
+        if(!id('r-agree').checked) return showToast('利用規約に同意してください');
+        const user = id('r-user').value; if(!/^[a-zA-Z0-9_\-\.\=]+$/.test(user)) { await showConfirm("ユーザーIDは半角英数字と一部記号のみ使用可能です。"); return; }
+        
+        try {
+            const usersRef = await fbGet('users') || {};
+            if(Object.values(usersRef).find(u => u.username.toLowerCase() === user.toLowerCase())) throw new Error("既に使用されています");
+            const email = user + "@friendstation.local"; const pass = id('r-pass').value;
+            const cred = await auth.createUserWithEmailAndPassword(email, pass);
+            const uid = cred.user.uid;
+            const uData = {
+                id: uid, username: user, nickname: id('r-nick').value, first_name: id('r-fn').value, last_name: id('r-ln').value, full_name: id('r-fn').value+' '+id('r-ln').value,
+                school_name: id('r-school').value, grade: id('r-grade').value, class_num: id('r-class').value, attendance_num: id('r-att').value,
+                birthdate: id('r-birth').value, status: 'pending', icon_url: './icon.jpeg', is_banned: 0, timestamp: Date.now()
+            };
+            await fbSet(`users/${uid}`, uData);
+            startPending(uid);
+        } catch (err) { id('auth-msg').style.display='block'; id('auth-msg').innerText=err.message; }
+    }
+
+    async function submitTrans(e) {
+        if(e) e.preventDefault(); 
+        try {
+            const user = id('t-user').value; const code = id('t-code').value;
+            const backups = await fbGet('backups') || {};
+            const bid = Object.keys(backups).find(k => {
+                const b = backups[k];
+                return b.transfer_code === code && b.username.toLowerCase() === user.toLowerCase();
+            });
+            if(!bid) throw new Error("コードが正しくないか期限切れです");
+            const data = JSON.parse(backups[bid].data);
+            await initDB(); await idbClearMsgs(); 
+            for(let m of data) await idbPutMsg(m); 
+            await fbDel(`backups/${bid}`);
+            showToast('復元しました。再ログインしてください。'); toggleAuth('login');
+        } catch (err) { id('auth-msg').style.display='block'; id('auth-msg').innerText=err.message; }
+    }
+
+    function playSample(file) { if (currentCallAudio && file.startsWith('call')) { stopCallSound(); currentCallAudio = new Audio('./' + file); currentCallAudio.loop = true; currentCallAudio.play().catch(e=>{}); return; } const a = new Audio('./' + file); a.play().catch(e=>{}); }
+    function playNotifSound() { if(localStorage.getItem('set-sound') !== 'false') { const file = localStorage.getItem('set-notif-sound') || 'tuuti1.mp3'; const a = new Audio('./' + file); a.play().catch(e=>{}); } }
+    function playCallSound() { if(localStorage.getItem('set-call-sound') !== 'false') { const file = localStorage.getItem('set-call-sound-file') || 'call1.mp3'; if(!currentCallAudio) { currentCallAudio = new Audio('./' + file); currentCallAudio.loop = true; } currentCallAudio.play().catch(e=>{}); } }
+    function stopCallSound() { if(currentCallAudio) { currentCallAudio.pause(); currentCallAudio.currentTime = 0; currentCallAudio = null; } }
+    function showBrowserNotif(title, body) { playNotifSound(); if (localStorage.getItem('set-notif') !== 'false' && Notification.permission === "granted") new Notification(title, { body }); }
+    function openMediaModal(url, type = 'image') { const img = id('mv-img'); const vid = id('mv-video'); if (type === 'video') { img.style.display = 'none'; vid.style.display = 'block'; vid.src = url; vid.load(); } else { vid.pause(); vid.style.display = 'none'; vid.src = ''; img.style.display = 'block'; img.src = url; } show('modal-media-view'); }
+    function closeMediaModal() { const vid = id('mv-video'); if (vid) { vid.pause(); vid.src = ''; } hide('modal-media-view'); }
+    function startTitleBlink(type = 'メッセージ') { if(!document.hidden) return; if(titleBlinkInterval) clearInterval(titleBlinkInterval); let showMsg = true; const label = type === '通知' ? '新着通知' : '新着メッセージ'; titleBlinkInterval = setInterval(() => { document.title = showMsg ? `(!) 【${label}】` : originalTitle; showMsg = !showMsg; }, 1000); }
+
+    function markReadSafely() {
+        if(!currentRoom || document.hidden || pendingRead) return;
+        pendingRead = true;
+        setTimeout(async () => {
+            const msgs = await fbGet(`messages/${currentRoom}`) || {};
+            for(let key in msgs) {
+                const m = msgs[key];
+                if(m.user_id !== myInfo.id && m.is_deleted === 0 && m.is_read === 0) {
+                    let readBy = []; try{ readBy = JSON.parse(m.read_by||'[]'); }catch(e){}
+                    if(!readBy.includes(myInfo.id)) {
+                        readBy.push(myInfo.id);
+                        await fbUpdate(`messages/${currentRoom}/${key}`, { is_read: 1, read_by: JSON.stringify(readBy) });
+                    }
+                }
+            }
+            updateUnreadBadge();
+            pendingRead = false;
+        }, 1000);
+    }
+
+    document.addEventListener("visibilitychange", () => { if(!document.hidden) { if(titleBlinkInterval) { clearInterval(titleBlinkInterval); titleBlinkInterval = null; } document.title = originalTitle; updateUnreadBadge(); if(currentRoom && currentMain === 'chat') markReadSafely(); } });
+    window.toggleSetting = (key, val) => { localStorage.setItem('set-' + key, val); };
+    function toggleChatMenu(e) { e.stopPropagation(); const menu = id('chat-menu'); id('chat-menu-action-text').innerText = isGroupCall ? 'グループを退会' : 'ブロック（フレンド解除）'; id('chat-menu-add-member').style.display = isGroupCall ? 'flex' : 'none'; menu.classList.toggle('hidden'); }
+    document.addEventListener('click', (e)=> { if(!e.target.closest('.msg') && !e.target.closest('.msg-opt-btn')) hide('context-menu'); if(!e.target.closest('.msg-react-btn') && !e.target.closest('#reaction-menu')) hide('reaction-menu'); if(!e.target.closest('#chat-menu') && !e.target.closest('button[onclick="toggleChatMenu(event)"]')) hide('chat-menu'); });
+
+    async function execChatMenuAction() {
+        hide('chat-menu');
+        if (isGroupCall) {
+            if(await showConfirm('このグループから退会しますか？')) {
+                await fbDel(`group_members/${currentRoom}/${myInfo.id}`); showToast('退会しました'); currentRoom = ''; currentTarget = ''; switchNav('chat'); loadGroups();
+            }
+        } else {
+            if(await showConfirm('このユーザーをブロック（フレンド解除）しますか？')) {
+                await fbSet(`blocks/${myInfo.id}/${currentTarget}`, true);
+                await fbDel(`friends/${myInfo.id}/${currentTarget}`); await fbDel(`friends/${currentTarget}/${myInfo.id}`);
+                showToast('ブロックしました'); currentRoom = ''; currentTarget = ''; switchNav('chat'); loadFriends();
+            }
+        }
+    }
+
+    async function openBlockListModal() {
+        const b = await fbGet(`blocks/${myInfo.id}`) || {};
+        const uids = Object.keys(b);
+        const users = await fbGet('users') || {};
+        const list = uids.map(id => users[id]).filter(u => u);
+        const out = id('block-list-content');
+        if(list.length === 0) out.innerHTML = '<p style="text-align:center; color:var(--text-sub); padding:20px;">ブロックしているユーザーはいません</p>';
+        else out.innerHTML = list.map(u => `<div style="display:flex; align-items:center; gap:10px; padding:10px; border-bottom:1px solid var(--border);"><img src="${u.icon_url}" onerror="this.src='./icon.jpeg'" style="width:40px;height:40px;border-radius:50%;object-fit:cover;"><div style="flex:1;"><b>${u.nickname}</b><br><span style="font-size:12px;color:var(--text-sub);">@${u.username}</span></div><button type="button" class="success" style="padding:6px 12px; font-size:12px;" onclick="unblockUser('${u.id}')">解除</button></div>`).join('');
+        show('modal-block-list'); toggleMenu();
+    }
+
+    async function unblockUser(uid) { if(await showConfirm('ブロックを解除しますか？')) { await fbDel(`blocks/${myInfo.id}/${uid}`); showToast('解除しました'); openBlockListModal(); loadFriends(); } }
+
+    async function initApp(){
+        if (!token) { logout(); return; }
+        hide('scr-auth'); hide('scr-pending'); show('scr-main'); await initDB();
+        id('set-nick').value=myInfo.nickname; id('set-id').value=myInfo.username; id('set-status').value=myInfo.status_message||''; id('my-id-disp').innerText=myInfo.username; 
+        id('set-sound').checked = localStorage.getItem('set-sound') !== 'false'; id('set-notif').checked = localStorage.getItem('set-notif') !== 'false';
+        id('set-notif-sound').value = localStorage.getItem('set-notif-sound') || 'tuuti1.mp3'; id('set-call-sound-file').value = localStorage.getItem('set-call-sound-file') || 'call1.mp3'; id('set-call-sound').checked = localStorage.getItem('set-call-sound') !== 'false';
+        if(myInfo.icon_url) { id('my-icon-set').src=myInfo.icon_url; id('home-my-icon').src=myInfo.icon_url; }
+        QRCode.toCanvas(id('my-qr'),myInfo.username,{width:200, margin:2});
+        if(Notification.permission!=="denied" && localStorage.getItem('set-notif') !== 'false') Notification.requestPermission();
+        
+        switchNav(currentNav); if(currentMain !== 'chat') switchMainPanel(currentMain);
+        
+        setupFirebaseListeners();
+        
+        const lastSync=localStorage.getItem('lastSync')||0; 
+        // Sync Offline Msgs (簡略化: Firebaseでは child_added で自動補完されるため不要だがDBに保存)
+        localStorage.setItem('lastSync', Date.now());
+        
+        updateUnreadBadge();
+        
+        const savedRoom = localStorage.getItem('activeRoom'), savedTarget = localStorage.getItem('currentTarget'), savedTargetName = localStorage.getItem('currentTargetName'), savedIcon = localStorage.getItem('currentTargetIcon');
+        if(savedRoom && currentMain === 'chat') openRoom(savedRoom, savedTargetName, savedTarget, savedIcon, localStorage.getItem('chatScrollTop')||0);
+        if(currentMain==='home') setTimeout(()=> id('main-home').scrollTop=localStorage.getItem('homeScrollTop')||0, 300);
+        if (localStorage.getItem('tcSession')) { textCallSession = localStorage.getItem('tcSession'); id('tc-target-name').innerText = localStorage.getItem('tcTargetName'); show('text-call-overlay'); }
+    }
+
+    function setupFirebaseListeners() {
+        // Online status
+        const myOnlineRef = db.ref(`online/${myInfo.id}`);
+        myOnlineRef.onDisconnect().remove();
+        myOnlineRef.set(true);
+        const onlRef = db.ref('online');
+        onlRef.on('value', snap => { onlineStatusCache = snap.val() || {}; updateOnlineBadges(); });
+        activeListeners.push(onlRef);
+
+        // Notifications
+        const notifRef = db.ref('notifications').orderByChild('user_id').equalTo(myInfo.id);
+        notifRef.on('child_added', snap => {
+            const n = snap.val(); n.id = snap.key;
+            if(n.timestamp > (Date.now() - 5000)) { // 新規のみ
+                loadNotifs(); updateUnreadBadge(); if(document.hidden) startTitleBlink('通知');
+                if(n.type==='chat') { if(localStorage.getItem('set-notif')!=='false' && Notification.permission==="granted") { playNotifSound(); new Notification(n.from_user_name, {body: n.content}); } }
+            }
+        });
+        activeListeners.push(notifRef);
+
+        // Friends & Groups Update (DBの更新を検知)
+        const frRef = db.ref(`friends/${myInfo.id}`);
+        frRef.on('value', () => { loadFriends(); updateUnreadBadge(); });
+        activeListeners.push(frRef);
+        
+        const gmRef = db.ref('group_members');
+        gmRef.on('value', () => { loadGroups(); });
+        activeListeners.push(gmRef);
+
+        // WebRTC Signaling
+        const webrtcRef = db.ref('webrtc');
+        webrtcRef.on('child_added', async snap => {
+            const d = snap.val(); const key = snap.key;
+            if (Date.now() - d.timestamp > 30000) return; // 古い信号無視
+            
+            if(d.type === 'call_user' && d.target_id === myInfo.id) {
+                incomingData = d; rtcType = d.video ? 'video' : 'voice'; id('caller-name').innerText = d.caller_name || '着信'; id('call-type-txt').innerHTML = d.video ? '<i class="fa-solid fa-video"></i> ビデオ通話' : '<i class="fa-solid fa-phone"></i> 音声通話'; hide('video-overlay'); hide('text-call-overlay'); show('modal-incoming'); playCallSound();
+            } else if (d.type === 'answer_call' && d.target_id === myInfo.id) {
+                if(d.accept) { hide('modal-calling'); hide('modal-incoming'); callSession = d.session_id; show('video-overlay'); setupPeer(d.answerer_id, true, d.icon_url, d.nickname); }
+                else { hide('modal-calling'); hide('modal-incoming'); showToast('通話が拒否されました'); hangUp(false); }
+            } else if (d.type === 'offer' && (d.target_id === myInfo.id || d.room_id === currentRoom)) {
+                if(d.sender_id !== myInfo.id) { setupPeer(d.sender_id, false, d.sender_icon, d.sender_name); try { await peers[d.sender_id].setRemoteDescription(new RTCSessionDescription(d.offer)); const a = await peers[d.sender_id].createAnswer(); await peers[d.sender_id].setLocalDescription(a); fbPush('webrtc', {type:'answer', target_id: d.sender_id, answer: a, session_id: d.session_id, room_id: isGroupCall?currentRoom:null, sender_id: myInfo.id, timestamp: Date.now()}); } catch(e){} }
+            } else if (d.type === 'answer' && (d.target_id === myInfo.id || d.room_id === currentRoom)) {
+                if(d.sender_id !== myInfo.id && peers[d.sender_id]) { try { await peers[d.sender_id].setRemoteDescription(new RTCSessionDescription(d.answer)); } catch(e){} }
+            } else if (d.type === 'ice' && (d.target_id === myInfo.id || d.room_id === currentRoom)) {
+                if(d.sender_id !== myInfo.id && peers[d.sender_id] && d.candidate) { peers[d.sender_id].addIceCandidate(new RTCIceCandidate(d.candidate)).catch(e=>{}); }
+            } else if (d.type === 'hang_up' && (d.target_id === myInfo.id || d.room_id === currentRoom)) {
+                if(d.room_id) { removePeer(d.sender_id); if(!isGroupCall && Object.keys(peers).length===0) hangUp(false); } else { hangUp(false); }
+            } else if (d.type === 'call_text' && d.target_id === myInfo.id) {
+                incomingData={...d}; rtcType='text'; id('caller-name').innerText=`${d.caller_name}`; id('call-type-txt').innerHTML='<i class="fa-solid fa-message"></i> テキスト通話着信'; hide('video-overlay'); hide('text-call-overlay'); show('modal-incoming'); playCallSound();
+            } else if (d.type === 'answer_text' && d.target_id === myInfo.id) {
+                if(d.accept) { hide('modal-calling'); hide('modal-incoming'); textCallSession = d.session_id; localStorage.setItem('tcSession', textCallSession); localStorage.setItem('tcTargetName', d.answerer_name); id('tc-target-name').innerText=`${d.answerer_name}`; textCallData={}; id('tc-remote-text').innerText=''; id('tc-local-input').value=''; show('text-call-overlay'); }
+                else { hide('modal-calling'); hide('modal-incoming'); showToast('通話が拒否されました'); rtcType='none'; }
+            } else if (d.type === 'text_sync' && (d.target_id === myInfo.id || d.room_id === currentRoom)) {
+                if(d.sender_id !== myInfo.id && rtcType === 'text') { if(isGroupCall) { textCallData[d.sender_id] = `[${d.sender_name}] ${d.text}`; id('tc-remote-text').innerText = Object.values(textCallData).join('\n\n'); } else { id('tc-remote-text').innerText=d.text; } }
+            } else if (d.type === 'end_text' && (d.target_id === myInfo.id || d.room_id === currentRoom)) {
+                if(isGroupCall && d.sender_id) { delete textCallData[d.sender_id]; id('tc-remote-text').innerText = Object.values(textCallData).join('\n\n'); } else { cleanupTextCall(); }
+            } else if (d.type === 'media_status' && (d.target_id === myInfo.id || d.room_id === currentRoom)) {
+                if(d.sender_id !== myInfo.id) { const vWrap = id('wrap-'+d.sender_id); if(vWrap) { const icon = vWrap.querySelector('.no-video-icon'); const mBadge = vWrap.querySelector('.mic-off-badge'); const vid = vWrap.querySelector('video'); if(icon) icon.style.display = d.video ? 'none' : 'block'; if(vid) vid.style.opacity = d.video ? '1' : '0'; if(mBadge) mBadge.style.display = d.audio ? 'none' : 'block'; } }
+            }
+        });
+        activeListeners.push(webrtcRef);
+
+        // typing
+        const typeRef = db.ref('typing');
+        typeRef.on('value', snap => {
+            const data = snap.val() || {};
+            if(currentRoom && data[currentRoom]) {
+                const now = Date.now(); typingTimers = {};
+                for(let uid in data[currentRoom]) { if(uid !== myInfo.id && now - data[currentRoom][uid].time < 3000) typingTimers[uid] = data[currentRoom][uid]; }
+                updateTypingUI();
+            }
+        });
+        activeListeners.push(typeRef);
+    }
+
+    function updateOnlineBadges() { document.querySelectorAll('.room-item').forEach(el => { const uid = el.dataset.uid; if(uid) { if(onlineStatusCache[uid]) el.classList.add('is-online'); else el.classList.remove('is-online'); } }); if(currentTarget && onlineStatusCache[currentTarget]) id('chat-target-online').style.display = 'block'; else id('chat-target-online').style.display = 'none'; }
+    function updateTypingUI() { const names = Object.values(typingTimers).map(t => t.name); if(names.length === 0) id('typing-indicator').innerText = ''; else if(names.length === 1) id('typing-indicator').innerText = names[0] + 'さんが入力中...'; else id('typing-indicator').innerText = names.join('、') + 'が入力中...'; }
+
+    async function updateUnreadBadge() {
+        const msgsRef = await fbGet('messages') || {};
+        const notifsRef = await fbGet('notifications') || {};
+        let unread = 0; const roomUnread = {};
+        for(let rid in msgsRef) {
+            if(rid.includes(myInfo.id) || rid.startsWith('g_')) {
+                let c = 0;
+                for(let mid in msgsRef[rid]) {
+                    const m = msgsRef[rid][mid];
+                    if(m.user_id !== myInfo.id && m.is_deleted === 0 && m.is_read === 0) {
+                        let readBy = []; try{ readBy = JSON.parse(m.read_by||'[]'); }catch(e){}
+                        if(!readBy.includes(myInfo.id)) c++;
+                    }
+                }
+                if(c > 0) { unread += c; roomUnread[rid] = c; }
+            }
+        }
+        let notifUnread = 0;
+        for(let nid in notifsRef) { if(notifsRef[nid].user_id === myInfo.id && notifsRef[nid].is_read === 0) notifUnread++; }
+
+        const b=id('notif-badge'); if(unread>0){ b.innerText=unread; show('notif-badge'); } else{ hide('notif-badge'); } 
+        const nb=id('notif-bell-badge'); if(notifUnread>0){ nb.innerText=notifUnread; show('notif-bell-badge'); } else{ hide('notif-bell-badge'); }
+        document.querySelectorAll('.room-unread-badge').forEach(el => el.classList.add('hidden'));
+        for(const [rid, count] of Object.entries(roomUnread)) { const el = id('unread-badge-'+rid); if(el && count > 0) { el.innerText = count; el.classList.remove('hidden'); } }
+    }
+
+    function toggleMenu(){ id('slide-menu').classList.toggle('open'); }
+    function switchNav(t){ const prevNav = currentNav; if(t === 'chat' && prevNav !== 'chat') { localStorage.setItem('activeNav', t); location.reload(); return; } currentNav = t; localStorage.setItem('activeNav', t); id('slide-menu').classList.remove('open'); ['chat','search','notif'].forEach(x=>{ id('nav-'+x)?.classList.toggle('active',x===t); if(id('panel-'+x)) id('panel-'+x).classList.toggle('hidden',x!==t); }); id('nav-home').classList.toggle('active', t==='home'); if(t==='home') { id('list-panel').style.display='none'; switchMainPanel('home'); } else { id('list-panel').style.display='flex'; switchMainPanel('chat'); } if(t==='notif') { db.ref('notifications').orderByChild('user_id').equalTo(myInfo.id).once('value', s => { s.forEach(c => { c.ref.update({is_read: 1}); }); loadNotifs(); }); } }
+    function switchMainPanel(p){ currentMain = p; localStorage.setItem('activeMain', p); id('slide-menu').classList.remove('open'); ['chat','home','settings','qr','notif-settings'].forEach(x=> { const el = id('main-'+x); if(el) { el.classList.remove('active'); hide('main-'+x); } }); const target = id('main-'+p); if(target) { show(target); target.classList.add('active'); } if(p==='chat'){ if(currentRoom){show('chat-active');hide('chat-empty');}else{hide('chat-active');show('chat-empty');} } if(p==='home') loadTimeline(); if(html5QrCode && p!=='qr') { html5QrCode.stop().catch(()=>{}); html5QrCode=null; hide('reader'); } }
+    
+    function saveScroll(type, el){ localStorage.setItem(type+'ScrollTop', el.scrollTop); }
+    function scrollToBottom(type){ const el = type==='chat'?id('ui-msgs'):null; if(el) el.scrollTop = el.scrollHeight; }
+    function closeChatMobile(){ id('main-container').classList.remove('active'); }
+    function showTermsModal() { toggleMenu(); show('modal-terms'); }
+
+    async function openProfileModal(uid, username, nickname, icon, status){
+        id('mp-icon').src = icon && icon.trim() !== '' ? icon : './icon.jpeg'; id('mp-name').innerText = nickname; id('mp-id').innerText = username; id('mp-status').innerText = status||'自己紹介はありません'; 
+        const actArea = id('mp-action-area'); actArea.style.display = 'none'; actArea.innerHTML = '';
+        if(uid && uid !== myInfo.id) {
+            actArea.style.display = 'flex';
+            const f1 = await fbGet(`friends/${myInfo.id}/${uid}`);
+            if(f1) { actArea.innerHTML = `<button type="button" style="background:var(--bg-hover);color:var(--text-sub);cursor:default;" disabled><i class="fa-solid fa-user-check"></i> フレンド</button>`; } 
+            else {
+                const reqs = await fbGet('friend_requests') || {};
+                let statusVal = 'none'; let rId = '';
+                for(let key in reqs) { if(reqs[key].from_user === myInfo.id && reqs[key].to_user === uid && reqs[key].status === 'pending') statusVal = 'requesting'; if(reqs[key].from_user === uid && reqs[key].to_user === myInfo.id && reqs[key].status === 'pending') { statusVal = 'pending_received'; rId = key; } }
+                if(statusVal === 'requesting') actArea.innerHTML = `<button type="button" style="background:var(--bg-hover);color:var(--text-sub);cursor:default;" disabled><i class="fa-solid fa-clock"></i> 申請中</button>`;
+                else if(statusVal === 'pending_received') actArea.innerHTML = `<button type="button" class="success" onclick="acceptRequestFromProfile('${rId}', '${uid}')"><i class="fa-solid fa-check"></i> 承認する</button>`;
+                else actArea.innerHTML = `<button type="button" onclick="requestFriendFromProfile('${username}', '${uid}')"><i class="fa-solid fa-user-plus"></i> フレンド申請</button>`;
+            }
+        }
+        show('modal-prof');
+    }
+    
+    async function requestFriendFromProfile(username, uid) {
+        const id = await fbPush('friend_requests', { from_user: myInfo.id, to_user: uid, status: 'pending', timestamp: Date.now() });
+        await fbPush('notifications', { user_id: uid, type: 'friend_request', from_user: myInfo.id, content: `${myInfo.nickname}から申請`, is_read: 0, timestamp: Date.now() });
+        showToast('申請しました'); const actArea = id('mp-action-area'); actArea.innerHTML = `<button type="button" style="background:var(--bg-hover);color:var(--text-sub);cursor:default;" disabled><i class="fa-solid fa-clock"></i> 申請中</button>`;
+    }
+
+    async function acceptRequestFromProfile(reqId, uid) {
+        await fbUpdate(`friend_requests/${reqId}`, { status: 'accepted' });
+        await fbSet(`friends/${myInfo.id}/${uid}`, { is_close_friend: 0 });
+        await fbSet(`friends/${uid}/${myInfo.id}`, { is_close_friend: 0 });
+        showToast('承認しました'); const actArea = id('mp-action-area'); actArea.innerHTML = `<button type="button" style="background:var(--bg-hover);color:var(--text-sub);cursor:default;" disabled><i class="fa-solid fa-user-check"></i> フレンド</button>`;
+    }
+
+    async function showCurrentProfile(){ if(currentTarget) { const u = await fbGet(`users/${currentTarget}`); if(u) openProfileModal(u.id, u.username, u.nickname, u.icon_url, u.status_message); } }
+
+    async function openSelectFriendsModal(type) {
+        currentModalType = type; const fs = await fbGet(`friends/${myInfo.id}`) || {}; const users = await fbGet('users') || {};
+        const listDiv = id('msf-list');
+        if (type === 'group') { id('msf-title').innerText = 'グループ作成'; id('msf-extra-input').innerHTML = '<input type="text" id="msf-group-name" placeholder="グループ名" required style="margin:0;">'; } 
+        else if (type === 'close') { id('msf-title').innerText = '親しい友達リスト設定'; id('msf-extra-input').innerHTML = '<p style="font-size:13px;color:var(--text-sub);">親しい友達に設定する人を選択してください</p>'; } 
+        else if (type === 'add_group_member') { id('msf-title').innerText = 'メンバーを追加'; id('msf-extra-input').innerHTML = '<p style="font-size:13px;color:var(--text-sub);">グループに追加するフレンドを選択してください</p>'; }
+        
+        const fList = Object.keys(fs).map(id => { const u = users[id]; if(u) u.is_close_friend = fs[id].is_close_friend; return u; }).filter(x=>x);
+        listDiv.innerHTML = fList.map(f => {
+            const isChecked = (type === 'close' && f.is_close_friend === 1) ? 'checked' : '';
+            return `<label style="display:flex;align-items:center;gap:15px;padding:12px;background:var(--bg-panel);border-radius:12px;cursor:pointer;border:1px solid var(--border);transition:all 0.2s;"><input type="checkbox" value="${f.id}" class="msf-checkbox" ${isChecked} style="width:auto;margin:0;"><img src="${f.icon_url}" onerror="this.src='./icon.jpeg'" style="width:36px;height:36px;border-radius:50%;"> <span style="font-size:16px;">${f.nickname}</span></label>`;
+        }).join('');
+        show('modal-select-friends'); toggleMenu(); hide('chat-menu');
+    }
+
+    id('msf-submit').onclick = async (e) => {
+        e.preventDefault(); const checkboxes = document.querySelectorAll('.msf-checkbox:checked'); const selectedIds = Array.from(checkboxes).map(cb => cb.value);
+        if (currentModalType === 'group') {
+            const name = id('msf-group-name').value.trim(); if(!name) return showToast('グループ名を入力してください');
+            const gid = 'g_' + uuidv4();
+            await fbSet(`groups/${gid}`, { id: gid, name, owner_id: myInfo.id, created_at: Date.now() });
+            await fbSet(`group_members/${gid}/${myInfo.id}`, true);
+            for(let m of selectedIds) await fbSet(`group_members/${gid}/${m}`, true);
+            showToast('グループを作成しました'); hide('modal-select-friends');
+        } else if(currentModalType === 'close') {
+            const fs = await fbGet(`friends/${myInfo.id}`) || {};
+            for(let id in fs) await fbUpdate(`friends/${myInfo.id}/${id}`, { is_close_friend: 0 });
+            for(let id of selectedIds) await fbUpdate(`friends/${myInfo.id}/${id}`, { is_close_friend: 1 });
+            showToast('リストを更新しました'); hide('modal-select-friends');
+        } else if(currentModalType === 'add_group_member') {
+            if(selectedIds.length === 0) return showToast('メンバーを選択してください');
+            for(let m of selectedIds) await fbSet(`group_members/${currentRoom}/${m}`, true);
+            showToast('メンバーを追加しました'); hide('modal-select-friends');
+        }
+    };
+
+    async function loadFriends(){
+        const fs = await fbGet(`friends/${myInfo.id}`) || {}; const blocks = await fbGet(`blocks`) || {}; const users = await fbGet('users') || {};
+        const l = [];
+        Object.keys(fs).forEach(id => {
+            const u = users[id]; const b1 = blocks[myInfo.id] && blocks[myInfo.id][id]; const b2 = blocks[id] && blocks[id][myInfo.id];
+            if(u && u.status === 'approved' && !b1 && !b2) { u.is_close_friend = fs[id].is_close_friend; l.push(u); }
+        });
+        id('ui-rooms').innerHTML = l.map(f=>{ 
+            const clFlag=f.is_close_friend===1?'<span style="font-size:12px;color:var(--accent);margin-left:5px;"><i class="fa-solid fa-lock"></i></span>':''; 
+            const rid = [myInfo.id, f.id].sort().join('_');
+            return `<div class="room-item" data-uid="${f.id}" onclick="openRoom('${rid}','${f.nickname}','${f.id}','${f.icon_url}')"><div style="position:relative;"><img src="${f.icon_url}" onerror="this.src='./icon.jpeg'" onclick="event.stopPropagation(); openProfileModal('${f.id}','${f.username}','${f.nickname}','${f.icon_url}','${f.status_message}')"><div class="online-badge"></div></div><div style="flex:1;display:flex;align-items:center;"><b style="font-size:16px;">${f.nickname} ${clFlag}</b><div class="room-unread-badge hidden" id="unread-badge-${rid}"></div></div></div>`; 
+        }).join('');
+        updateOnlineBadges(); updateUnreadBadge();
+    }
+    
+    async function loadGroups(){
+        const gms = await fbGet('group_members') || {}; const groups = await fbGet('groups') || {}; const l = [];
+        Object.keys(gms).forEach(gid => { if(gms[gid][myInfo.id] && groups[gid]) l.push(groups[gid]); });
+        id('ui-groups').innerHTML = l.map(g=>{ return `<div class="room-item" onclick="openRoom('${g.id}','${g.name}','${g.id}','./icon.jpeg')"><div style="width:52px;height:52px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:20px;color:#fff;"><i class="fa-solid fa-user-group"></i></div><div style="flex:1;display:flex;align-items:center;"><b style="font-size:16px;">${g.name}</b><div class="room-unread-badge hidden" id="unread-badge-${g.id}"></div></div></div>`; }).join('');
+    }
+    
+    async function openRoom(rid, name, tid, icon, scrollPos=0){ 
+        currentRoom=rid; currentTarget=tid; isGroupCall = rid.startsWith('g_'); switchMainPanel('chat');
+        localStorage.setItem('activeRoom', rid); localStorage.setItem('currentTarget', tid); localStorage.setItem('currentTargetName', name); localStorage.setItem('currentTargetIcon', icon);
+        id('chat-title').innerText=name; id('chat-target-icon').src=icon && icon.trim() !== '' ? icon : './icon.jpeg'; show('chat-active'); hide('chat-empty'); id('typing-indicator').innerText='';
+        if(window.innerWidth <= 768) { id('main-container').classList.add('active'); show('btn-back-chat'); }
+        updateOnlineBadges();
+        
+        msgListeners.forEach(r => r.off()); msgListeners = [];
+        id('ui-msgs').innerHTML='';
+        const ref = db.ref(`messages/${rid}`);
+        ref.orderByChild('timestamp').on('child_added', snap => {
+            const m = snap.val(); await idbPutMsg(m); renderMsg(m, true); if(!scrollPos) scrollToBottom('chat');
+        });
+        ref.on('child_changed', snap => {
+            const d = snap.val(); idbUpdateMsgStatus(d.msg_id, d.content, d.is_deleted, d.edit_history); idbUpdateReaction(d.msg_id, JSON.parse(d.reactions||'{}'));
+            const wrap = id('wrap-'+d.msg_id); if(wrap) wrap.outerHTML = ''; renderMsg(d, true); // 簡易更新
+        });
+        msgListeners.push(ref);
+        if(scrollPos) setTimeout(()=>id('ui-msgs').scrollTop = scrollPos, 300);
+        if(!document.hidden) { markReadSafely(); }
+    }
+    
+    function renderMsg(m, append = true){
+        const b=id('ui-msgs'), isMe=m.user_id===myInfo.id, cls=isMe?'my-msg':'other-msg', t=new Date(m.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+        let rep=''; if(m.reply_to){ try{const r=JSON.parse(m.reply_to); rep=`<div class="reply-banner"><i class="fa-solid fa-reply"></i> ${r.name}: ${r.text.substring(0,15)}...</div>`;}catch(e){} }
+        
+        let c=''; 
+        if(m.is_deleted === 1) { c = `<span style="color:var(--text-sub); font-style:italic;"><i class="fa-solid fa-ban"></i> 送信を取り消しました</span>`; } 
+        else {
+            if(m.type==='image') c=`<img src="${m.content}" onclick="openMediaModal(this.src,'image')">`; 
+            else if(m.type==='video') c=`<video src="${m.content}" controls></video>`; 
+            else if(m.type==='system_call') {
+                const parts = m.content.split(':'); const msgTxt = parts[0]; const sId = parts[1]; const cType = parts.length > 2 ? parts[2] : 'voice';
+                if (cType === 'text') { c = `<div class="sys-call-msg"><i class="fa-solid fa-message"></i> ${msgTxt} <button type="button" class="success" style="margin-left:10px;padding:6px 12px;font-size:13px;" onclick="joinTextCall('${sId}')"><i class="fa-solid fa-right-to-bracket"></i> 参加</button></div>`; } 
+                else { const iconCls = cType === 'video' ? 'fa-video' : 'fa-phone'; c = `<div class="sys-call-msg"><i class="fa-solid ${iconCls}"></i> ${msgTxt} <button type="button" class="success" style="margin-left:10px;padding:6px 12px;font-size:13px;" onclick="joinGroupCall('${sId}', '${cType}')"><i class="fa-solid fa-right-to-bracket"></i> 参加</button></div>`; }
+            }
+            else c=m.content.replace(/</g,"&lt;").replace(/>/g,"&gt;");
+            let hist = []; try{ hist = JSON.parse(m.edit_history || '[]'); }catch(e){}
+            if(hist.length > 0 && m.type!=='system_call') c += `<span style="font-size:10px; color:var(--text-sub); margin-left:8px; display:block; text-align:right;">(編集済)</span>`;
+        }
+
+        let readCount = 0; try { readCount = JSON.parse(m.read_by || '[]').length; } catch(e){}
+        let rd='';
+        if(isMe){
+            if(m.room_id.startsWith('g_')) { if(readCount > 0) rd = `<span class="is-read" id="rd-${m.msg_id}">既読 ${readCount}</span>`; else rd = `<span class="is-read" id="rd-${m.msg_id}" style="display:none;"></span>`; } 
+            else { if(m.is_read) rd = `<span class="is-read" id="rd-${m.msg_id}">既読</span>`; else rd = `<span class="is-read" id="rd-${m.msg_id}" style="display:none;"></span>`; }
+        }
+
+        let reBadge=''; try{const r=JSON.parse(m.reactions||'{}'); const eArr=[]; Object.entries(r).forEach(([emoji,uids])=>{if(uids.length>0)eArr.push(`${emoji}${uids.length>1?uids.length:''}`)}); if(eArr.length>0) reBadge=`<div class="reactions-badge" id="react-${m.msg_id}">${eArr.join(' ')}</div>`; else reBadge=`<div class="reactions-badge" id="react-${m.msg_id}" style="display:none;"></div>`;}catch(e){}
+        
+        let senderNameHtml = ''; if (!isMe && m.room_id.startsWith('g_')) { senderNameHtml = `<div style="font-size:11px; color:var(--text-sub); margin-bottom:2px; margin-left:10px;">${m.user_name}</div>`; }
+        const reactBtn = m.type!=='system_call' ? `<button type="button" class="msg-react-btn" onclick="showReactionMenu(event, '${m.msg_id}')">😊</button>` : '';
+        const optBtn = m.type!=='system_call' ? `<button type="button" class="msg-opt-btn" onclick="openMsgOpt(event, '${m.msg_id}', ${isMe}, ${m.timestamp})"><i class="fa-solid fa-ellipsis-vertical"></i></button>` : '';
+        
+        const row = isMe ? `<div style="display:flex;align-items:center;gap:5px;justify-content:flex-end;position:relative;z-index:2;">${optBtn}${reactBtn}<div class="msg" id="msg-${m.msg_id}">${c}${reBadge}</div></div>` : `${senderNameHtml}<div style="display:flex;align-items:center;gap:5px;justify-content:flex-start;position:relative;z-index:2;"><div class="msg" id="msg-${m.msg_id}">${c}${reBadge}</div>${reactBtn}${optBtn}</div>`;
+        const el = document.createElement('div'); el.className = `msg-wrap ${cls}`; el.id = `wrap-${m.msg_id}`; el.innerHTML = `${rep}${row}<span class="msg-info">${rd}${t}</span>`;
+        if(append) b.appendChild(el); else b.insertBefore(el, b.firstChild);
+        if(m.type!=='system_call') setupContextMenu(el.querySelector('.msg'), m.msg_id, m.content ? m.content.replace(/'/g,"\\'").substring(0,20) : '', m.user_name, isMe, m.timestamp, m.is_deleted);
+    }
+
+    function setupContextMenu(node, msgId, textPreview, userName, isMe, timestamp, isDeleted) { let pressTimer; node.addEventListener('contextmenu', e => { e.preventDefault(); if(!isDeleted) showContextMenu(e.pageX, e.pageY, msgId, textPreview, userName, isMe, timestamp); }); node.addEventListener('touchstart', e => { pressTimer = setTimeout(() => { const t = e.touches[0]; if(!isDeleted) showContextMenu(t.pageX, t.pageY, msgId, textPreview, userName, isMe, timestamp); }, 600); }); node.addEventListener('touchend', () => clearTimeout(pressTimer)); node.addEventListener('touchmove', () => clearTimeout(pressTimer)); }
+    
+    async function openMsgOpt(e, msgId, isMe, timestamp) { const m = await fbGet(`messages/${currentRoom}/${msgId}`); if(!m || m.is_deleted) return; showContextMenu(e.pageX, e.pageY, msgId, m.content.substring(0,20), m.user_name, isMe, timestamp); }
+
+    function showContextMenu(x, y, msgId, textPreview, userName, isMe, timestamp){
+        ctxTargetMsgId = msgId; ctxTargetIsMe = isMe; ctxTargetTimestamp = timestamp;
+        const menu = id('context-menu'); menu.style.left = x + 'px'; menu.style.top = y + 'px'; show('context-menu');
+        id('ctx-reply').onclick = () => { replyTarget = {id: msgId, text: textPreview, name: userName}; id('rp-name').innerText=userName; id('rp-text').innerText=textPreview; show('reply-preview'); hide('context-menu'); id('msg-input').focus(); };
+        const editBtn = id('ctx-edit'); const delBtn = id('ctx-delete');
+        if(isMe) { show(delBtn); const diff = Date.now() - timestamp; if(diff <= 60 * 60 * 1000) show(editBtn); else hide(editBtn); editBtn.onclick = () => { editTargetMsgId = msgId; id('ed-text').innerText = textPreview; show('edit-preview'); hide('context-menu'); id('msg-input').focus(); }; delBtn.onclick = async () => { hide('context-menu'); if(await showConfirm('送信を取り消しますか？')) await fbUpdate(`messages/${currentRoom}/${msgId}`, { is_deleted: 1, content: '' }); }; } else { hide(editBtn); hide(delBtn); }
+    }
+
+    function showReactionMenu(e, msgId) { e.preventDefault(); e.stopPropagation(); ctxTargetMsgId = msgId; const menu = id('reaction-menu'); menu.style.left = e.pageX + 'px'; menu.style.top = e.pageY + 'px'; show('reaction-menu'); }
+    async function sendReaction(emoji){ if(ctxTargetMsgId && currentRoom){ const m = await fbGet(`messages/${currentRoom}/${ctxTargetMsgId}`); if(m) { let r = JSON.parse(m.reactions||'{}'); if(!r[emoji]) r[emoji]=[]; const idx=r[emoji].indexOf(myInfo.id); if(idx===-1) r[emoji].push(myInfo.id); else r[emoji].splice(idx,1); await fbUpdate(`messages/${currentRoom}/${ctxTargetMsgId}`, {reactions: JSON.stringify(r)}); hide('reaction-menu'); hide('context-menu'); } } }
+    function cancelReply(){ replyTarget=null; hide('reply-preview'); }
+    function cancelEdit(){ editTargetMsgId=null; hide('edit-preview'); id('msg-input').value=''; }
+
+    function replyToNote(uid, uname, content, icon) { const rid = [myInfo.id, uid].sort().join('_'); openRoom(rid, uname, uid, icon); replyTarget = {id: 'note_'+uid, text: content, name: uname}; id('rp-name').innerText=uname; id('rp-text').innerText=content.substring(0,20)+'...'; show('reply-preview'); id('msg-input').focus(); }
+
+    id('btn-send-msg').onclick=async ()=>{ 
+        const v=id('msg-input').value.trim(); const f=id('chat-file').files[0];
+        if(!v && !f) return; 
+        if(editTargetMsgId && !f) {
+            const m = await fbGet(`messages/${currentRoom}/${editTargetMsgId}`);
+            if(m && !m.is_deleted && (Date.now() - m.timestamp) <= 60*60*1000) { let hist = JSON.parse(m.edit_history||'[]'); hist.push({content: m.content, edited_at: Date.now()}); await fbUpdate(`messages/${currentRoom}/${editTargetMsgId}`, { content: v, edit_history: JSON.stringify(hist) }); cancelEdit(); } else { showToast("編集できません"); }
+        } else if(f) { uploadMedia(v); } else { sendMsgToDB(v, 'text'); id('msg-input').value=''; cancelReply(); }
+    };
+    
+    async function sendMsgToDB(content, type, meta={}) {
+        const msgId = 'msg_' + uuidv4();
+        const msg = { msg_id: msgId, room_id: currentRoom, user_id: myInfo.id, user_name: myInfo.nickname, type, content, reply_to: replyTarget?JSON.stringify(replyTarget):null, reactions: '{}', is_read: 0, media_meta: JSON.stringify(meta), timestamp: Date.now(), is_deleted: 0, edit_history: '[]', read_by: '[]' };
+        await fbSet(`messages/${currentRoom}/${msgId}`, msg);
+        if(!currentRoom.startsWith('g_')) { const tid = currentRoom.replace(myInfo.id,'').replace('_',''); await fbPush(`notifications`, { user_id: tid, type: 'chat', from_user: myInfo.id, from_user_name: myInfo.nickname, content: type==='text'?content:'メディア', is_read: 0, timestamp: Date.now() }); }
+    }
+
+    async function uploadMedia(textMsg){ 
+        const f=id('chat-file').files[0]; if(!f)return; 
+        const ext = f.name.split('.').pop(); const refName = 'uploads/' + Date.now() + '_' + Math.random().toString(36).substring(2) + '.' + ext;
+        const sRef = storage.ref(refName); await sRef.put(f); const url = await sRef.getDownloadURL();
+        await sendMsgToDB(url, f.type.startsWith('video')?'video':'image');
+        if (textMsg) await sendMsgToDB(textMsg, 'text');
+        id('chat-file').value=''; id('chat-f-status').innerText=''; id('chat-file-preview').style.display='none'; id('chat-file-preview').src=''; const vid = id('chat-file-preview-vid'); if(vid){ vid.style.display='none'; vid.src=''; } id('msg-input').value=''; cancelReply(); 
+    }
+
+    async function execChatSearch(e) {
+        if(e) e.preventDefault(); const q=id('chat-s-query').value.trim(); if(!q)return;
+        const msgs = await fbGet(`messages/${currentRoom}`) || {};
+        const res = Object.values(msgs).filter(m => m.type==='text' && m.is_deleted===0 && m.content.includes(q)).sort((a,b)=>b.timestamp-a.timestamp);
+        const out=id('chat-search-out');
+        if(res.length>0){ out.innerHTML = res.map(m=> `<div style="padding:15px;border-bottom:1px solid var(--border);"><b style="color:var(--accent);">${m.user_name}</b> <span style="font-size:12px;color:var(--text-sub);margin-left:10px;">${new Date(m.timestamp).toLocaleDateString()}</span><div style="font-size:15px;margin-top:8px;line-height:1.4;">${m.content}</div></div>`).join(''); } else { out.innerHTML = '<p style="color:var(--text-sub);text-align:center;margin-top:20px;">見つかりませんでした</p>'; } show('modal-search-res');
+    }
+
+    async function loadTimeline(){
+        const postsRef = await fbGet('posts') || {}; const usersRef = await fbGet('users') || {}; const fsRef = await fbGet(`friends/${myInfo.id}`) || {}; const blocksRef = await fbGet('blocks') || {}; const pLikes = await fbGet('post_likes') || {}; const pComms = await fbGet('post_comments') || {};
+        const pList = Object.values(postsRef).filter(p => {
+            const u = usersRef[p.user_id]; const b1 = blocksRef[myInfo.id] && blocksRef[myInfo.id][p.user_id]; const b2 = blocksRef[p.user_id] && blocksRef[p.user_id][myInfo.id];
+            if(!u || b1 || b2) return false;
+            if(p.visibility === 'public' || p.user_id === myInfo.id) return true;
+            if(p.visibility === 'friends' && fsRef[p.user_id]) return true;
+            if(p.visibility === 'close' && fsRef[p.user_id] && fsRef[p.user_id].is_close_friend) return true;
+            return false;
+        }).sort((a,b)=>b.timestamp-a.timestamp).slice(0, 50);
+
+        id('ui-timeline').innerHTML = pList.map(p=>{
+            const u = usersRef[p.user_id];
+            const m = p.media_url ? (p.media_url.includes('.mp4') || p.media_url.includes('.mov') ? `<video src="${p.media_url}" class="post-media" controls></video>` : `<img src="${p.media_url}" class="post-media" onclick="event.stopPropagation(); openMediaModal(this.src,'image')">`) : '';
+            const delBtn = p.user_id===myInfo.id ? `<span class="del-post-btn" onclick="event.stopPropagation(); actionPost('delete','${p.id}')"><i class="fa-solid fa-xmark"></i></span>` : '';
+            const visBadge = p.visibility==='close' ? `<span style="color:var(--accent);font-size:12px;margin-left:8px;"><i class="fa-solid fa-lock"></i> 親しい友達</span>` : (p.visibility==='friends' ? `<span style="color:var(--accent);font-size:12px;margin-left:8px;"><i class="fa-solid fa-user-group"></i> フレンド</span>` : '');
+            let likeC=0, isLiked=false; if(pLikes[p.id]) { likeC=Object.keys(pLikes[p.id]).length; if(pLikes[p.id][myInfo.id]) isLiked=true; }
+            let commC=0; if(pComms) { Object.values(pComms).forEach(c=>{if(c.post_id===p.id)commC++;}); }
+
+            return `<div class="post-card" onclick="openPostDetail('${p.id}')">${delBtn}<div class="post-header"><img src="${u.icon_url}" onerror="this.src='./icon.jpeg'" onclick="event.stopPropagation(); openProfileModal('${p.user_id}','${u.username}','${u.nickname}','${u.icon_url}','')"> <div><b style="font-size:16px;">${u.nickname}</b> <span style="color:var(--text-sub);font-size:14px;margin-left:5px;">@${u.username} · ${new Date(p.timestamp).toLocaleDateString()}</span>${visBadge}</div></div><div class="post-content">${(p.content||'').replace(/</g,"&lt;")}</div>${m}<div class="post-actions" onclick="event.stopPropagation()"><div onclick="openPostDetail('${p.id}')"><i class="fa-regular fa-comment"></i> ${commC}</div><div class="${isLiked?'liked':''}" onclick="actionPost('like','${p.id}')" oncontextmenu="event.preventDefault(); showInteractions('${p.id}', 'post', '${p.user_id}')">❤️ ${likeC}</div></div></div>`;
+        }).join('');
+    }
+
+    async function submitPost(){ 
+        const txt=id('post-text').value.trim(); const file=id('post-file').files[0]; if(!txt&&!file)return; 
+        const pId = 'post_' + uuidv4(); let media_url=null; 
+        if(file){ const ext = file.name.split('.').pop(); const refName = 'uploads/' + Date.now() + '_' + Math.random().toString(36).substring(2) + '.' + ext; const sRef = storage.ref(refName); await sRef.put(file); media_url = await sRef.getDownloadURL(); } 
+        await fbSet(`posts/${pId}`, { id: pId, user_id: myInfo.id, content: txt, media_url, visibility: id('post-vis').value, timestamp: Date.now() });
+        id('post-text').value=''; id('post-file').value=''; id('post-f-status').innerText=''; id('post-file-preview').style.display='none'; id('post-file-preview').src=''; const vid = id('post-file-preview-vid'); if(vid){ vid.style.display='none'; vid.src=''; }
+        loadTimeline();
+    }
+    
+    async function actionPost(action, pid){ 
+        if(action==='delete'){ if(!(await showConfirm("削除しますか？"))) return; await fbDel(`posts/${pid}`); await fbDel(`post_likes/${pid}`); }
+        if(action==='like'){ const l = await fbGet(`post_likes/${pid}/${myInfo.id}`); if(l) await fbDel(`post_likes/${pid}/${myInfo.id}`); else await fbSet(`post_likes/${pid}/${myInfo.id}`, Date.now()); }
+        loadTimeline();
+    }
+
+    async function openPostDetail(pid) {
+        currentPostIdForComment = pid; show('modal-post-detail');
+        const p = await fbGet(`posts/${pid}`); const u = await fbGet(`users/${p.user_id}`);
+        if(p && u) {
+            const m = p.media_url ? (p.media_url.includes('.mp4') || p.media_url.includes('.mov') ? `<video src="${p.media_url}" style="width:100%;border-radius:12px;margin-top:10px;" controls></video>` : `<img src="${p.media_url}" style="width:100%;border-radius:12px;margin-top:10px;" onclick="openMediaModal(this.src,'image')">`) : '';
+            id('pd-post-content').innerHTML = `<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;cursor:pointer;" onclick="openProfileModal('${p.user_id}','${u.username}','${u.nickname}','${u.icon_url}','')"><img src="${u.icon_url}" onerror="this.src='./icon.jpeg'" style="width:40px;height:40px;border-radius:50%;object-fit:cover;"><div><b style="font-size:16px;">${u.nickname}</b><br><span style="color:var(--text-sub);font-size:12px;">@${u.username}</span></div></div><div style="font-size:16px;line-height:1.5;white-space:pre-wrap;">${(p.content||'').replace(/</g,"&lt;")}</div>${m}`;
+            const out = id('pd-likes-list');
+            if (p.user_id !== myInfo.id) { out.innerHTML = '<span style="color:var(--text-sub);font-size:13px;">他人のいいね詳細は見られません</span>'; } 
+            else {
+                const likes = await fbGet(`post_likes/${pid}`) || {}; const users = await fbGet('users');
+                if(Object.keys(likes).length === 0) out.innerHTML = '<span style="color:var(--text-sub);font-size:13px;">まだいいねはありません</span>';
+                else out.innerHTML = Object.keys(likes).map(uid => `<div style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:5px;" onclick="openProfileModal('${uid}','${users[uid].username}','${users[uid].nickname}','${users[uid].icon_url}','')"><img src="${users[uid].icon_url}" onerror="this.src='./icon.jpeg'" style="width:30px;height:30px;border-radius:50%;object-fit:cover;"><span style="font-size:14px;">${users[uid].nickname}</span></div>`).join('');
+            }
+        }
+        const pComms = await fbGet('post_comments') || {}; const users = await fbGet('users'); const cout = id('pd-comments-list');
+        const cl = Object.values(pComms).filter(c=>c.post_id===pid).sort((a,b)=>a.timestamp-b.timestamp);
+        if(cl.length===0){ cout.innerHTML = '<div style="color:var(--text-sub);text-align:center;padding:20px 0;">コメントはまだありません</div>'; }
+        else { cout.innerHTML = cl.map(c=>{ const u=users[c.user_id]; const cim = c.image_url?(c.image_url.includes('.mp4') || c.image_url.includes('.mov') ? `<video src="${c.image_url}" class="c-media" controls></video>`:`<img src="${c.image_url}" class="c-media" onclick="openMediaModal(this.src,'image')">`):''; return `<div class="comment-item"><img src="${u.icon_url}" onerror="this.src='./icon.jpeg'" class="c-ic"><div><b>${u.nickname}</b><div style="margin-top:4px;line-height:1.4;">${c.content}</div>${cim}</div></div>`; }).join(''); }
+    }
+
+    async function submitComment(e) {
+        if(e) e.preventDefault(); if(!currentPostIdForComment)return; const txt=id('pd-c-text').value.trim(); const file=id('pd-c-file').files[0]; if(!txt&&!file)return;
+        let image_url=null; 
+        if(file){ const ext = file.name.split('.').pop(); const refName = 'uploads/' + Date.now() + '_' + Math.random().toString(36).substring(2) + '.' + ext; const sRef = storage.ref(refName); await sRef.put(file); image_url = await sRef.getDownloadURL(); }
+        const cId = uuidv4(); await fbSet(`post_comments/${cId}`, { id: cId, post_id: currentPostIdForComment, user_id: myInfo.id, content: txt, image_url, timestamp: Date.now() });
+        id('pd-c-text').value=''; id('pd-c-file').value=''; id('pd-c-f-status').innerText=''; id('pd-c-file-preview').style.display='none'; id('pd-c-file-preview').src=''; const vid = id('pd-c-file-preview-vid'); if(vid){ vid.style.display='none'; vid.src=''; } openPostDetail(currentPostIdForComment); loadTimeline();
+    }
+    
+    async function showInteractions(idStr, type, targetUserId){
+        if (targetUserId && targetUserId !== myInfo.id) { await showConfirm('他人のいいね詳細は見られません'); return; }
+        const path = type === 'post' ? `post_likes/${idStr}` : `note_likes/${idStr}`;
+        const likes = await fbGet(path) || {}; const users = await fbGet('users');
+        let h=''; if(Object.keys(likes).length>0) h+=`<h4 style="margin:15px 0 10px 0;color:var(--danger);"><i class="fa-solid fa-heart"></i> いいね</h4>` + Object.keys(likes).map(uid=>{ const u = users[uid]; return `<div style="padding:8px 0;border-bottom:1px solid var(--bg-hover);display:flex;align-items:center;gap:10px;cursor:pointer;" onclick="hide('modal-interactions');openProfileModal('${uid}','${u.username}','${u.nickname}','${u.icon_url}','')"><img src="${u.icon_url}" onerror="this.src='./icon.jpeg'" style="width:24px;height:24px;border-radius:50%;">@${u.username} (${u.nickname})</div>` }).join('');
+        id('interactions-list').innerHTML = h || '<p style="text-align:center;color:var(--text-sub);padding:20px 0;">まだありません</p>'; show('modal-interactions');
+    }
+
+    async function execSearch(e) {
+        if(e) e.preventDefault(); const q=id('s-query').value.trim().toLowerCase(); if(!q)return; 
+        const users = await fbGet('users') || {}; const fs = await fbGet(`friends/${myInfo.id}`) || {}; const uList = Object.values(users).filter(u => u.status==='approved' && (u.username.toLowerCase().includes(q) || u.nickname.toLowerCase().includes(q))).slice(0,50);
+        let h=''; if(uList.length>0){ h+='<h4 style="margin-bottom:15px;"><i class="fa-solid fa-users"></i> ユーザー</h4>'; uList.forEach(u=>{ if(u.id === myInfo.id) return; const isFriend = fs[u.id]; const statusBadge = onlineStatusCache[u.id] ? `<div class="online-badge" style="display:block;"></div>` : ''; const btnHtml = isFriend ? `<button type="button" style="padding:10px 15px;border-radius:20px;background:var(--bg-hover);color:var(--text-main);border:1px solid var(--border);" onclick="openProfileModal('${u.id}','${u.username}','${u.nickname}','${u.icon_url}','${u.status_message}')"><i class="fa-solid fa-user"></i> プロフ</button>` : `<button type="button" id="req-btn-${u.id}" style="padding:10px 20px;border-radius:20px;" onclick="requestFriendFromProfile('${u.username}', '${u.id}')"><i class="fa-solid fa-user-plus"></i> 追加</button>`; h+=`<div class="room-item" style="background:var(--bg-panel);border-radius:16px;margin-bottom:12px;border:1px solid var(--border);"><div style="position:relative;"><img src="${u.icon_url}" onerror="this.src='./icon.jpeg'" onclick="openProfileModal('${u.id}','${u.username}','${u.nickname}','${u.icon_url}','${u.status_message}')">${statusBadge}</div><div style="flex:1;"><b style="font-size:16px;">${u.nickname}</b><div style="font-size:13px;color:var(--text-sub);margin-top:2px;">@${u.username}</div></div>${btnHtml}</div>`; }); } id('ui-search-res').innerHTML=h||'<p style="color:var(--text-sub);text-align:center;">見つかりませんでした</p>'; 
+    }
+
+    function openNotePostModal() { id('modal-note-input').value=''; show('modal-note-post'); }
+    async function submitNotePostModal(e) { if(e) e.preventDefault(); await fbSet(`notes/${myInfo.id}`, { content: id('modal-note-input').value, visibility: id('modal-note-vis').value, timestamp: Date.now() }); hide('modal-note-post'); loadNotes(); }
+    async function submitNote(e) { if(e) e.preventDefault(); await fbSet(`notes/${myInfo.id}`, { content: id('note-input').value, visibility: id('note-vis').value, timestamp: Date.now() }); id('note-input').value=''; loadNotes(); }
+    
+    async function loadNotes(){ 
+        const notesRef = await fbGet('notes') || {}; const users = await fbGet('users') || {}; const fsRef = await fbGet(`friends/${myInfo.id}`) || {}; const nLikes = await fbGet('note_likes') || {};
+        const now = Date.now(); const EXPIRY_24H = 24 * 60 * 60 * 1000;
+        const validNotes = Object.keys(notesRef).map(uid => { const n=notesRef[uid]; n.user_id=uid; return n; }).filter(n => (now - n.timestamp) < EXPIRY_24H && users[n.user_id]);
+        
+        const fNotes = validNotes.filter(n => n.visibility==='public' || n.user_id===myInfo.id || (n.visibility==='friends' && fsRef[n.user_id]) || (n.visibility==='close' && fsRef[n.user_id] && fsRef[n.user_id].is_close_friend));
+        let myNote = fNotes.find(n => n.user_id === myInfo.id); let otherNotes = fNotes.filter(n => n.user_id !== myInfo.id).sort((a,b)=>b.timestamp-a.timestamp);
+        let html = '';
+        if(myNote) { const u=users[myInfo.id]; let lc=0, il=false; if(nLikes[myInfo.id]){ lc=Object.keys(nLikes[myInfo.id]).length; if(nLikes[myInfo.id][myInfo.id])il=true; } html += `<div class="note-item my-note" onclick="openNoteView('${myInfo.id}', '自分', '${u.icon_url}', '${myNote.content.replace(/'/g,"\\'")}', ${il}, ${lc}, true)"><div class="note-img-wrap"><img src="${u.icon_url}" onerror="this.src='./icon.jpeg'"><div class="note-bubble">${myNote.content}</div></div><div class="note-name">自分</div></div>`; } 
+        else { html += `<div class="note-item my-note" onclick="openNotePostModal()"><div class="note-img-wrap"><img src="${myInfo.icon_url}" onerror="this.src='./icon.jpeg'" style="opacity:0.6;"><div style="position:absolute; bottom:0; right:0; background:var(--accent); border-radius:50%; width:20px; height:20px; display:flex; align-items:center; justify-content:center; color:#fff; font-size:14px; border:2px solid var(--bg-dark);">+</div></div><div class="note-name">ノート追加</div></div>`; }
+
+        html += otherNotes.map(n=>{ 
+            const u = users[n.user_id]; let lc=0, il=false; if(nLikes[n.user_id]){ lc=Object.keys(nLikes[n.user_id]).length; if(nLikes[n.user_id][myInfo.id])il=true; }
+            const vis = n.visibility==='close'?'<span style="color:var(--accent);"><i class="fa-solid fa-lock"></i></span>':(n.visibility==='friends'?'<span style="color:var(--accent);"><i class="fa-solid fa-user-group"></i></span>':''); 
+            return `<div class="note-item" onclick="openNoteView('${n.user_id}', '${u.nickname}', '${u.icon_url}', '${n.content.replace(/'/g,"\\'")}', ${il}, ${lc}, false)"><div class="note-img-wrap"><img src="${u.icon_url}" onerror="this.src='./icon.jpeg'"><div class="note-bubble">${vis}${n.content}</div></div><div class="note-name">${u.nickname}</div></div>`;
+        }).join(''); 
+        id('ui-notes').innerHTML = html;
+    }
+
+    function openNoteView(uid, uname, icon, content, isLiked, likeCount, isMe) {
+        id('nv-icon').src = icon; id('nv-name').innerText = uname; id('nv-content').innerText = content;
+        const likeBtn = id('nv-like-btn'); likeBtn.innerText = isLiked ? '❤️' : '🤍';
+        likeBtn.onclick = async () => { const l = await fbGet(`note_likes/${uid}/${myInfo.id}`); if(l) { await fbDel(`note_likes/${uid}/${myInfo.id}`); likeBtn.innerText='🤍'; } else { await fbSet(`note_likes/${uid}/${myInfo.id}`, Date.now()); likeBtn.innerText='❤️'; } loadNotes(); };
+        if(isMe) { hide('nv-reply-btn'); show('nv-like-list-btn'); show('nv-del-btn'); id('nv-like-list-btn').onclick = async () => { await showInteractions(uid, 'note', uid); }; id('nv-del-btn').onclick = async () => { if(await showConfirm("ノートを削除しますか？")) { await fbDel(`notes/${myInfo.id}`); hide('modal-note-view'); loadNotes(); } } } 
+        else { show('nv-reply-btn'); hide('nv-like-list-btn'); hide('nv-del-btn'); id('nv-reply-btn').onclick = () => { hide('modal-note-view'); replyToNote(uid, uname, content, icon); }; }
+        show('modal-note-view');
+    }
+    
+    async function loadNotifs(){ 
+        const nRef = await fbGet('notifications') || {}; const reqs = await fbGet('friend_requests') || {};
+        const l = Object.values(nRef).filter(n=>n.user_id===myInfo.id).map(n=>{
+            if(n.type==='friend_request') { for(let k in reqs){ if(reqs[k].from_user===n.from_user && reqs[k].to_user===myInfo.id && reqs[k].status==='pending') { n.req_status='pending'; n.request_id=k; } } } return n;
+        }).sort((a,b)=>b.timestamp-a.timestamp).slice(0,50);
+        id('ui-notifs').innerHTML=l.map(n=>{ 
+            let a=''; if(n.type==='friend_request'&&n.req_status==='pending') a=`<div style="margin-top:15px;"><button type="button" class="success" style="padding:10px 20px;border-radius:20px;font-size:14px;" onclick="acceptRequest('${n.request_id}', '${n.from_user}', this)">承認</button></div>`; 
+            let icon = n.type==='system' ? '<i class="fa-solid fa-bullhorn" style="color:var(--accent);margin-right:8px;"></i>' : '';
+            return `<li style="padding:20px;border-bottom:1px solid var(--border);${n.is_read?'':'background:var(--bg-hover);border-radius:12px;'}"><div style="font-size:15px;line-height:1.5;white-space:pre-wrap;">${icon}${n.content}</div>${a}</li>`; 
+        }).join(''); 
+    }
+
+    async function acceptRequest(reqId, fromUser, btn) { await acceptRequestFromProfile(reqId, fromUser); btn.outerHTML = '<span style="color:var(--text-sub);"><i class="fa-solid fa-check"></i> 承認済</span>'; }
+    
+    async function pushBackup(){ if(!(await showConfirm("ブラウザ内の全履歴をサーバーに預けますか？新端末で引き出せます。")))return; const msgs=await idbGetAllMsgs(); const c = Math.random().toString(36).substr(2, 8).toUpperCase(); await fbSet(`backups/${uuidv4()}`, { user_id: myInfo.id, username: myInfo.username, transfer_code: c, data: JSON.stringify(msgs), timestamp: Date.now() }); id('transfer-code').innerText=c; showToast('コードを控えて新端末で入力してください'); }
+    async function uploadIcon(inp){ const f=inp.files[0]; if(!f)return; const ext = f.name.split('.').pop(); const refName = 'uploads/' + Date.now() + '_' + Math.random().toString(36).substring(2) + '.' + ext; const sRef = storage.ref(refName); await sRef.put(f); const url = await sRef.getDownloadURL(); await fbUpdate(`users/${myInfo.id}`, {icon_url: url}); myInfo.icon_url=url; localStorage.setItem('myInfo',JSON.stringify(myInfo)); id('my-icon-set').src=url; id('home-my-icon').src=url; }
+    
+    async function updateProfile(key,val){ 
+        if(key === 'username') { if(!/^[a-zA-Z0-9_\-\.\=]+$/.test(val)) { await showConfirm("ユーザーIDは半角英数字と一部記号のみ使用可能です。"); return; } const users = await fbGet('users'); if(Object.values(users).find(u=>u.username.toLowerCase()===val.toLowerCase() && u.id!==myInfo.id)) { showToast("既に使用されています"); return; } }
+        await fbUpdate(`users/${myInfo.id}`, {[key]:val}); myInfo[key]=val; localStorage.setItem('myInfo',JSON.stringify(myInfo)); 
+        const sc=id('sc-'+(key==='username'?'id':key==='nickname'?'nick':'status')); if(sc){sc.classList.add('show');setTimeout(()=>sc.classList.remove('show'),2000);} 
+        if(key==='username'){id('my-id-disp').innerText=val; QRCode.toCanvas(id('my-qr'),val,{width:200, margin:2});} 
+    }
+
+    async function requestPwChange(e) { if(e) e.preventDefault(); await fbSet(`password_requests/${uuidv4()}`,{user_id: myInfo.id, new_password: id('set-new-pw').value, status: 'pending', timestamp: Date.now()}); showToast('管理者に申請しました'); id('set-new-pw').value=''; }
+    function startQRScanner(){ show('reader'); if(!html5QrCode) html5QrCode = new Html5Qrcode("reader"); html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: {width: 250, height: 250} }, async decodedText => { html5QrCode.stop(); hide('reader'); const users=await fbGet('users'); const tgt=Object.values(users).find(u=>u.username.toLowerCase()===decodedText.toLowerCase()); if(tgt){ await requestFriendFromProfile(decodedText, tgt.id); showToast(decodedText+' に申請しました'); }else{ showToast('ユーザーが見つかりません'); } }).catch(err => { showToast("カメラ起動失敗"); hide('reader'); }); }
+
+    function addLocalVideo() { let w = id('wrap-local'); if(!w) { w = document.createElement('div'); w.className = 'video-wrap'; w.id = 'wrap-local'; const v = document.createElement('video'); v.id = 'local-video'; v.autoplay = true; v.playsinline = true; v.muted = true; const ic = document.createElement('img'); ic.className = 'no-video-icon'; ic.id = 'local-no-video'; ic.src = myInfo.icon_url || './icon.jpeg'; ic.onerror = function() { this.src = './icon.jpeg'; }; const nb = document.createElement('div'); nb.className = 'name-badge'; nb.innerText = '自分'; const mo = document.createElement('div'); mo.className = 'mic-off-badge'; mo.id = 'local-mic-off'; mo.innerHTML = '<i class="fa-solid fa-microphone-slash"></i>'; w.appendChild(v); w.appendChild(ic); w.appendChild(nb); w.appendChild(mo); id('video-grid').appendChild(w); } return w.querySelector('video'); }
+    function resetCallControls(mode) { rtcType = mode; streamFlags = {video: (mode==='video'), audio: true}; const bMic=id('btn-mic'), bCam=id('btn-cam'), bSpk=id('btn-spk'); bMic.innerHTML='<i class="fa-solid fa-microphone"></i> ON'; bMic.className="success"; bSpk.innerHTML='<i class="fa-solid fa-volume-high"></i> ON'; bSpk.className="success"; if(mode==='video'){ show('btn-cam'); bCam.innerHTML='<i class="fa-solid fa-video"></i> ON'; bCam.className="success"; } else { hide('btn-cam'); } id('video-grid').innerHTML = ''; const lv = addLocalVideo(); lv.style.opacity = streamFlags.video ? "1" : "0"; id('local-no-video').style.display = streamFlags.video ? 'none' : 'block'; id('local-mic-off').style.display = 'none'; }
+    function removePeer(peerId) { if(peers[peerId]) { peers[peerId].close(); delete peers[peerId]; } const w = id('wrap-'+peerId); if(w) w.remove(); }
+    
+    function hangUp(emitEvent = true){
+        if(emitEvent) {
+            if (rtcType === 'text') { if (isGroupCall && textCallSession) { fbPush('webrtc', {type:'end_text', room_id: currentRoom, sender_id: myInfo.id}); } else if (currentTarget) { fbPush('webrtc', {type:'end_text', target_id: currentTarget}); } } 
+            else if (rtcType === 'voice' || rtcType === 'video') { if (isGroupCall && callSession) { fbPush('webrtc', {type:'hang_up', room_id: currentRoom, sender_id: myInfo.id}); } else if (currentTarget) { fbPush('webrtc', {type:'hang_up', target_id: currentTarget, sender_id: myInfo.id}); } }
+            if(incomingData && !callSession && rtcType !== 'text') { fbPush('webrtc', {type:'answer_call', target_id: incomingData.caller_id, accept: false}); }
+        }
+        Object.keys(peers).forEach(removePeer); peers = {}; if(localStream){ localStream.getTracks().forEach(t=>t.stop()); localStream = null; }
+        stopCallSound(); hide('video-overlay'); hide('modal-incoming'); hide('modal-calling'); hide('text-call-overlay'); incomingData = null; callSession = null; textCallSession = null; rtcType = 'none'; textCallData = {};
+    }
+    
+    function cancelCall() { hangUp(true); }
+
+    async function startRtcCall(mode) {
+        if(!currentRoom) return; if(Object.keys(peers).length > 0) hangUp(true); 
+        if (!isGroupCall && !onlineStatusCache[currentTarget]) { await showConfirm("相手がオフラインのため通話できません。"); return; }
+        const v = mode === 'video';
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia({video: v, audio: true});
+            resetCallControls(mode); id('local-video').srcObject = localStream; hide('text-call-overlay'); hide('modal-incoming'); hide('modal-calling');
+            const callId = "call_" + uuidv4(); callSession = callId;
+            if (isGroupCall) {
+                const sysMsg = v ? 'ビデオ通話が開始されました' : '音声通話が開始されました';
+                sendMsgToDB(`${sysMsg}:${callId}:${mode}`, 'system_call'); show('video-overlay'); // Join Group
+            } else {
+                id('calling-name').innerText = localStorage.getItem('currentTargetName') || '相手'; show('modal-calling');
+                fbPush('webrtc', {type:'call_user', target_id: currentTarget, caller_id: myInfo.id, caller_name: myInfo.nickname, video: v, session_id: callSession, timestamp: Date.now()});
+            }
+        } catch(e) { await showConfirm("マイクまたはカメラのアクセスが拒否されました。"); hangUp(false); }
+    }
+
+    function joinGroupCall(sId, mode) {
+        if(Object.keys(peers).length > 0) hangUp(true); const v = mode === 'video';
+        navigator.mediaDevices.getUserMedia({video: v, audio: true}).then(stream => { localStream = stream; resetCallControls(mode); id('local-video').srcObject = localStream; show('video-overlay'); callSession = sId; fbPush('webrtc', {type:'join_group', room_id: currentRoom, session_id: sId, sender_id: myInfo.id}); }).catch(async err => { await showConfirm("アクセスが拒否されました。"); });
+    }
+
+    function joinTextCall(sId) { textCallSession = sId; rtcType = 'text'; textCallData = {}; id('tc-target-name').innerText = localStorage.getItem('currentTargetName') || 'グループ'; id('tc-remote-text').innerText = ''; id('tc-local-input').value = ''; show('text-call-overlay'); fbPush('webrtc', {type:'join_text', session_id: sId, sender_id: myInfo.id}); }
+
+    async function answerCallSession(a) {
+        hide('modal-incoming'); stopCallSound();
+        if(!a){ if(rtcType==='text') fbPush('webrtc', {type:'answer_text', target_id: incomingData.caller_id, accept: false}); else fbPush('webrtc', {type:'answer_call', target_id: incomingData.caller_id, accept: false}); hangUp(false); return; } 
+        if (rtcType === 'text') { fbPush('webrtc', {type:'answer_text', target_id: incomingData.caller_id, answerer_name: myInfo.nickname, accept: true, session_id: 'tc_'+uuidv4()}); return; }
+        try {
+            const v = incomingData.video; localStream = await navigator.mediaDevices.getUserMedia({video: v, audio:true}); const mode = v ? 'video' : 'voice'; resetCallControls(mode); id('local-video').srcObject = localStream; show('video-overlay'); callSession = incomingData.session_id; setupPeer(incomingData.caller_id, false, incomingData.icon_url, incomingData.caller_name); fbPush('webrtc', {type:'answer_call', target_id: incomingData.caller_id, session_id: callSession, accept: true, answerer_id: myInfo.id, nickname: myInfo.nickname, icon_url: myInfo.icon_url});
+        } catch(e) { showToast("アクセスが拒否されました。"); fbPush('webrtc', {type:'answer_call', target_id: incomingData.caller_id, accept: false}); hangUp(false); }
+    }
+
+    function setupPeer(peerId, initiator, iconUrl, nickname){
+        if(peers[peerId]) return;
+        const pc = new RTCPeerConnection({ iceServers:[ {urls:'stun:stun.l.google.com:19302'}, {urls:'stun:stun1.l.google.com:19302'} ] }); peers[peerId] = pc;
+        if(localStream) localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
+        pc.ontrack = e => { let w = id('wrap-'+peerId); if(!w) { w = document.createElement('div'); w.className = 'video-wrap'; w.id = 'wrap-'+peerId; const v = document.createElement('video'); v.id = 'vid-'+peerId; v.autoplay = true; v.playsinline = true; const ic = document.createElement('img'); ic.className = 'no-video-icon'; ic.src = iconUrl || './icon.jpeg'; ic.onerror = function() { this.src = './icon.jpeg'; }; const nb = document.createElement('div'); nb.className = 'name-badge'; nb.innerText = nickname || '通信中...'; const mo = document.createElement('div'); mo.className = 'mic-off-badge'; mo.innerHTML = '<i class="fa-solid fa-microphone-slash"></i>'; w.appendChild(v); w.appendChild(ic); w.appendChild(nb); w.appendChild(mo); id('video-grid').appendChild(w); } const vid = w.querySelector('video'); if (vid.srcObject !== e.streams[0]) { vid.srcObject = e.streams[0]; } };
+        pc.onicecandidate = e => { if(e.candidate) { fbPush('webrtc', { type:'ice', target_id: peerId, room_id: isGroupCall?currentRoom:null, candidate: JSON.parse(JSON.stringify(e.candidate)), session_id: callSession, sender_id: myInfo.id, timestamp: Date.now() }); } };
+        pc.onconnectionstatechange = () => { if(pc.connectionState==='disconnected'||pc.connectionState==='failed'||pc.connectionState==='closed') { removePeer(peerId); if (!isGroupCall && Object.keys(peers).length === 0) hangUp(false); } };
+        if(initiator) { pc.createOffer().then(o => pc.setLocalDescription(o).then(() => o)).then(o => { fbPush('webrtc', { type:'offer', target_id: peerId, room_id: isGroupCall?currentRoom:null, offer: {type: o.type, sdp: o.sdp}, session_id: callSession, sender_id: myInfo.id, sender_name: myInfo.nickname, sender_icon: myInfo.icon_url, timestamp: Date.now() }); }).catch(e => console.error(e)); }
+    }
+
+    function updateMediaStatus() { fbPush('webrtc', { type: 'media_status', target_id: currentTarget, room_id: isGroupCall?currentRoom:null, session_id: callSession, sender_id: myInfo.id, video: streamFlags.video, audio: streamFlags.audio, timestamp: Date.now() }); const lv = id('local-video'); if(lv) lv.style.opacity = streamFlags.video ? "1" : "0"; const ic = id('local-no-video'); if(ic) ic.style.display = streamFlags.video ? "none" : "block"; const mo = id('local-mic-off'); if(mo) mo.style.display = streamFlags.audio ? "none" : "block"; }
+    function toggleMic(){ if(localStream){ const t=localStream.getAudioTracks()[0]; if(t){ t.enabled=!t.enabled; streamFlags.audio=t.enabled; const b=id('btn-mic'); if(t.enabled){b.innerHTML='<i class="fa-solid fa-microphone"></i> ON';b.className="success";}else{b.innerHTML='<i class="fa-solid fa-microphone-slash"></i> OFF';b.className="danger";} updateMediaStatus(); } } }
+    function toggleCam(){ if(localStream){ const t=localStream.getVideoTracks()[0]; if(t){ t.enabled=!t.enabled; streamFlags.video=t.enabled; const b=id('btn-cam'); if(t.enabled){b.innerHTML='<i class="fa-solid fa-video"></i> ON';b.className="success";}else{b.innerHTML='<i class="fa-solid fa-video-slash"></i> OFF';b.className="danger";} updateMediaStatus(); } } }
+    function toggleSpk(){ const vs = document.querySelectorAll('#video-grid video'); let muted = false; vs.forEach(v => { v.muted = !v.muted; muted = v.muted; }); const b=id('btn-spk'); if(!muted){b.innerHTML='<i class="fa-solid fa-volume-high"></i> ON';b.className="success";}else{b.innerHTML='<i class="fa-solid fa-volume-xmark"></i> OFF';b.className="danger";} }
+
+    function startTextCall(){ if(!currentRoom) return; if (!isGroupCall && !onlineStatusCache[currentTarget]) { showConfirm("相手がオフラインです。").then(()=>{}); return; } rtcType = 'text'; id('calling-name').innerText = localStorage.getItem('currentTargetName') || '相手'; if (isGroupCall) { textCallSession = "tc_" + Date.now(); id('tc-target-name').innerText = localStorage.getItem('currentTargetName') || 'グループ'; id('tc-remote-text').innerText = ''; id('tc-local-input').value = ''; textCallData = {}; hide('video-overlay'); hide('modal-incoming'); hide('modal-calling'); show('text-call-overlay'); sendMsgToDB(`テキスト通話が開始されました:${textCallSession}:text`, 'system_call'); } else { hide('video-overlay'); hide('text-call-overlay'); hide('modal-incoming'); show('modal-calling'); fbPush('webrtc', {type:'call_text', target_id: currentTarget, caller_id: myInfo.id, caller_name: myInfo.nickname, timestamp: Date.now()}); } }
+    function endTextCall(){ if(textCallSession) { if (isGroupCall) fbPush('webrtc', {type:'end_text', room_id: currentRoom, sender_id: myInfo.id}); else fbPush('webrtc', {type:'end_text', target_id: currentTarget, sender_id: myInfo.id}); cleanupTextCall(); } }
+    function cleanupTextCall() { hide('text-call-overlay'); textCallSession=null; rtcType='none'; textCallData = {}; localStorage.removeItem('tcSession'); localStorage.removeItem('tcTargetName'); }
+
+    // Input Events
+    id('msg-input').addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.isComposing) { e.preventDefault(); id('btn-send-msg').click(); } });
+    id('msg-input').addEventListener('input', () => { if(currentRoom) { fbSet(`typing/${currentRoom}/${myInfo.id}`, {time: Date.now(), name: myInfo.nickname}); if(typingTimeout) clearTimeout(typingTimeout); typingTimeout = setTimeout(() => { fbDel(`typing/${currentRoom}/${myInfo.id}`); }, 2000); } });
+    id('tc-local-input').addEventListener('input', function() { if(rtcType === 'text' && textCallSession) { fbPush('webrtc', {type:'text_sync', target_id: currentTarget, room_id: isGroupCall?currentRoom:null, text: this.value, sender_id: myInfo.id, sender_name: myInfo.nickname, timestamp: Date.now()}); } });
+
+    // Login Check on load
+    auth.onAuthStateChanged(async user => {
+        if(user && !token) {
+            token = user.uid;
+            const u = await fbGet(`users/${token}`);
+            if(u && u.status === 'approved') {
+                myInfo = u; localStorage.setItem('token', token); localStorage.setItem('myInfo', JSON.stringify(myInfo));
+                initApp();
+            } else { auth.signOut(); }
+        } else if(!user && token) { logout(); }
+    });
+    if(token && myInfo.id) initApp();
+</script>
+</body>
+</html>
+
+上記が index.html（フロントエンド・メイン画面）の完全なフルコードです。 続いて
+admin.html（管理画面）のコードを出力しますので、「続けて」とご返信ください。
